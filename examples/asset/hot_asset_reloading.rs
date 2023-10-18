@@ -3,7 +3,7 @@
 //! This example illustrates hot reloading mesh changes.
 //!
 //! Note that hot asset reloading requires the [`AssetWatcher`](bevy::asset::io::AssetWatcher) to be enabled
-//! for your current platform. For desktop platforms, enable the `file_watcher` cargo feature.
+//! for your current platform. For desktop platforms, enable the `filesystem_watcher` cargo feature.
 
 use bevy::prelude::*;
 

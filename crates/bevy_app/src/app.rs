@@ -6,7 +6,7 @@ use bevy_ecs::{
         apply_state_transition, common_conditions::run_once as run_once_condition,
         run_enter_schedule, setup_state_transitions_in_world, ComputedStates, FreeStateMutation,
         InternedScheduleLabel, IntoSystemConfigs, IntoSystemSetConfigs, ManualStateTransitions,
-        ScheduleBuildSettings, ScheduleLabel, StateMutation, StateTransitionEvent,
+        ScheduleBuildSettings, ScheduleLabel, StateMutation, StateTransitionEvent, EventBasedState, EventBasedStateMutation, process_state_events, apply_updated_event_state,
     },
 };
 use bevy_utils::{intern::Interned, thiserror::Error, tracing::debug, HashMap, HashSet};
@@ -449,6 +449,68 @@ impl App {
             let mut schedules = self.world.resource_mut::<Schedules>();
             S::register_state_compute_systems_in_schedule(schedules.as_mut());
         }
+
+        self
+    }
+    
+    /// Initializes an [`EventBasedState`] with standard starting values.
+    ///
+    /// If the [`EventBasedState`] already exists, nothing happens.
+    ///
+    /// Adds the [`State<S>`] resources and the [`Event`] the state uses to mutate,
+    /// as well as the transition related systems.
+    ///
+    /// If you would like to control how other systems run based on the current state,
+    /// you can emulate this behavior using the [`in_state`] [`Condition`].
+    pub fn init_event_state<S: EventBasedState + StateMutation<MutationType = EventBasedStateMutation> + FromWorld>(
+        &mut self,
+    ) -> &mut Self {
+        if !self.world.contains_resource::<State<S>>() {
+            setup_state_transitions_in_world(&mut self.world);
+            self.init_resource::<State<S>>()
+            .add_event::<S::Event>()
+                .add_event::<StateTransitionEvent<S>>()
+                .add_systems(
+                    ManualStateTransitions,
+                    (
+                        run_enter_schedule::<S>.run_if(run_once_condition()),
+                        process_state_events::<S>.pipe(apply_updated_event_state::<S>)
+                    )
+                        .chain(),
+                );
+        }
+
+        self
+    }
+
+    /// Inserts a specific [`EventBasedState`] to the current [`App`] and
+    /// overrides any [`EventBasedState`] previously added of the same type.
+    ///
+    /// Adds the [`State<S>`] resources and the [`Event`] the state uses to mutate,
+    /// as well as the transition related systems.
+    ///
+    /// If you would like to control how other systems run based on the current state,
+    /// you can emulate this behavior using the [`in_state`] [`Condition`].
+    pub fn insert_event_state<S: EventBasedState + StateMutation<MutationType = EventBasedStateMutation>>(
+        &mut self,
+        state: S,
+    ) -> &mut Self {
+        setup_state_transitions_in_world(&mut self.world);
+        self.insert_resource(State::new(state))
+            .add_event::<S::Event>()
+            .add_event::<StateTransitionEvent<S>>()
+            .add_systems(
+                ManualStateTransitions,
+                (
+                    run_enter_schedule::<S>.run_if(run_once_condition()),
+                    process_state_events::<S>.pipe(apply_updated_event_state::<S>)
+                )
+                    .chain(),
+            );
+
+        // The OnEnter, OnExit, and OnTransition schedules are lazily initialized
+        // (i.e. when the first system is added to them), and World::try_run_schedule is used to fail
+        // gracefully if they aren't present.
 
         self
     }

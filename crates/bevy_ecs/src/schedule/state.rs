@@ -4,13 +4,13 @@ use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
 
-use crate as bevy_ecs;
+use crate::{self as bevy_ecs, event::EventReader};
 use crate::event::Event;
 use crate::prelude::FromWorld;
 #[cfg(feature = "bevy_reflect")]
 use crate::reflect::ReflectResource;
 use crate::schedule::ScheduleLabel;
-use crate::system::Resource;
+use crate::system::{Resource, In};
 use crate::world::World;
 
 pub use bevy_ecs_macros::States;
@@ -79,6 +79,12 @@ impl StateMutationType for FreeStateMutation {}
 pub struct ComputedStateMutation;
 impl sealed::StateMutationTypeSealed for ComputedStateMutation {}
 impl StateMutationType for ComputedStateMutation {}
+
+/// A struct for identifying [`States`] that can only be mutated
+/// through typed messages.
+pub struct EventBasedStateMutation;
+impl sealed::StateMutationTypeSealed for EventBasedStateMutation {}
+impl StateMutationType for EventBasedStateMutation {}
 
 /// The label of a [`Schedule`] that runs whenever [`State<S>`]
 /// enters this state.
@@ -179,6 +185,8 @@ impl<S: States> Deref for State<S> {
         self.get()
     }
 }
+
+
 
 /// The next state of [`State<S>`].
 ///
@@ -536,10 +544,46 @@ macro_rules! impl_state_set_sealed_tuples {
 
 all_tuples!(impl_state_set_sealed_tuples, 1, 15, S, s);
 
+/// Trait defining a state that can only be mutated through Events.
+pub trait EventBasedState: 'static + Send + Sync + Clone + PartialEq + Eq + Hash + Debug {
+    /// The type of message this state processes.
+    type Event: crate::event::Event;
+
+    /// This function applies a given message to the state, and outputs a new version of the state.
+    /// It is called automatically by during state transitions, when events have been published.
+    /// 
+    /// Note that ordering of events within the same frame may be non-deterministic.
+    fn process(
+        current: Option<Self>,
+        event: &Self::Event
+    ) -> Option<Self>;
+}
+
+
+pub fn process_state_events<S: EventBasedState + States>(
+    mut events: EventReader<S::Event>,
+    current: Option<crate::prelude::Res<State<S>>>
+) -> (bool, Option<S>) {
+    let mut current = current.map(|v| v.get().clone());
+    let original = current.clone();
+
+    for event in events.read() {
+        current = S::process(current, event);
+    }
+
+    (current != original, current)
+}
+
+pub fn apply_updated_event_state<S: EventBasedState + States>(In((changed, updated)): In<(bool, Option<S>)>, world: &mut World) {
+    if changed {
+        internal_apply_state_transition(world, updated);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate as bevy_ecs;
+    use crate::{self as bevy_ecs, system::IntoSystem, schedule::apply_deferred, event::Events};
 
     #[derive(States, PartialEq, Eq, Debug, Default, Hash, Clone)]
     enum SimpleState {
@@ -705,5 +749,101 @@ mod tests {
         }));
         world.run_schedule(StateTransition);
         assert!(!world.contains_resource::<State<ComplexComputedState>>());
+    }
+
+    #[derive(Event, PartialEq, Eq, Hash, Debug, Clone)]
+    enum ModifyState {
+        GoToA,
+        GoToB,
+        Activate,
+        Deactivate
+    }
+
+    fn process(state: Option<EventState>, event: &ModifyState) -> Option<EventState> {
+        match event {
+            ModifyState::GoToB => match state {
+                Some(EventState::A) => Some(EventState::B(false)),
+                _ => state
+            }
+            ModifyState::Activate => match state {
+                Some(EventState::B(_)) => Some(EventState::B(true)),
+                _ => state
+            }
+            ModifyState::Deactivate => match state {
+                Some(EventState::B(_)) => Some(EventState::B(false)),
+                _ => state
+            }
+            ModifyState::GoToA => Some(EventState::A),
+            _ => state
+        }
+    }
+
+    #[derive(States, PartialEq, Eq, Debug, Default, Hash, Clone)]
+    #[event(ModifyState, process)]
+
+    enum EventState {
+        #[default]
+        A,
+        B(bool),
+    }
+
+    #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+    struct EventUpdate;
+
+    #[test]
+    fn can_process_event_based_state() {
+        let mut world = World::new();
+        
+        world.init_resource::<State<EventState>>();
+        world.init_resource::<Events<ModifyState>>();
+
+
+        let mut schedules = Schedules::new();
+        let mut apply_changes = Schedule::new(ManualStateTransitions);
+        apply_changes.add_systems(process_state_events::<EventState>.pipe(apply_updated_event_state::<EventState>));
+        schedules.insert(apply_changes);
+        let mut event_update = Schedule::new(EventUpdate);
+        event_update.add_systems(bevy_ecs::event::event_update_system::<ModifyState>);
+        schedules.insert(event_update);
+
+        world.insert_resource(schedules);
+
+        setup_state_transitions_in_world(&mut world);
+
+        world.send_event(ModifyState::GoToB);
+        world.run_schedule(EventUpdate);
+        world.run_schedule(StateTransition);
+        world.run_schedule(EventUpdate);
+        assert_eq!(
+            world.resource::<State<EventState>>().0,
+            EventState::B(false)
+        );
+
+        world.send_event(ModifyState::Activate);
+        world.run_schedule(EventUpdate);
+        world.run_schedule(StateTransition);
+        world.run_schedule(EventUpdate);
+        assert_eq!(
+            world.resource::<State<EventState>>().0,
+            EventState::B(true)
+        );
+
+        world.send_event(ModifyState::GoToB);
+        world.run_schedule(EventUpdate);
+        world.run_schedule(StateTransition);
+        world.run_schedule(EventUpdate);
+        assert_eq!(
+            world.resource::<State<EventState>>().0,
+            EventState::B(true)
+        );
+
+        world.send_event(ModifyState::GoToA);
+        world.run_schedule(EventUpdate);
+        world.run_schedule(StateTransition);
+        world.run_schedule(EventUpdate);
+        assert_eq!(
+            world.resource::<State<EventState>>().0,
+            EventState::A
+        );
     }
 }

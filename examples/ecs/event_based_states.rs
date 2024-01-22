@@ -17,9 +17,9 @@
 //! but will not be focusing on explaing it here.
 
 use bevy::prelude::*;
+use bevy_internal::ecs::schedule::MessageMutableState;
 
-#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, States)]
-#[event(AppStateEvent, process_app_state)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Hash, States, Debug)]
 enum AppState {
     #[default]
     Menu,
@@ -28,29 +28,33 @@ enum AppState {
     },
 }
 
-#[derive(Event)]
-enum AppStateEvent {
+#[derive(Clone, Debug)]
+enum AppStateMessage {
     EnterGame,
     ToggleTurbo,
 }
 
-fn process_app_state(mut current: Option<AppState>, event: &AppStateEvent) -> Option<AppState> {
-    match event {
-        AppStateEvent::EnterGame => match &current {
-            Some(AppState::InGame { .. }) => {}
-            _ => {
-                current = Some(AppState::InGame { turbo: 0 });
-            }
-        },
-        AppStateEvent::ToggleTurbo => {
-            if let Some(AppState::InGame { turbo }) = &current {
-                current = Some(AppState::InGame {
-                    turbo: if *turbo < 2 { turbo + 1 } else { 0 },
-                });
+impl MessageMutableState for AppState {
+    type Message = AppStateMessage;
+
+    fn process(mut current: Option<AppState>, message: AppStateMessage) -> Option<AppState> {
+        match message {
+            AppStateMessage::EnterGame => match &current {
+                Some(AppState::InGame { .. }) => {}
+                _ => {
+                    current = Some(AppState::InGame { turbo: 0 });
+                }
+            },
+            AppStateMessage::ToggleTurbo => {
+                if let Some(AppState::InGame { turbo }) = &current {
+                    current = Some(AppState::InGame {
+                        turbo: if *turbo < 2 { turbo + 1 } else { 0 },
+                    });
+                }
             }
         }
-    }
-    current
+        current
+}
 }
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash)]
@@ -72,7 +76,7 @@ impl ComputedStates for InGame {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .init_event_state::<AppState>() // Alternatively we could use .insert_state(AppState::Menu)
+        .init_state::<AppState>()
         .add_computed_state::<InGame>()
         .add_systems(Startup, setup)
         // This system runs when we enter `AppState::Menu`, during the `StateTransition` schedule.
@@ -149,7 +153,7 @@ fn setup_menu(mut commands: Commands) {
 }
 
 fn menu(
-    mut events: EventWriter<AppStateEvent>,
+    mut next: ResMut<NextState<AppState>>,
     mut interaction_query: Query<
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<Button>),
@@ -159,7 +163,7 @@ fn menu(
         match *interaction {
             Interaction::Pressed => {
                 *color = PRESSED_BUTTON.into();
-                events.send(AppStateEvent::EnterGame);
+                next.message(AppStateMessage::EnterGame);
             }
             Interaction::Hovered => {
                 *color = HOVERED_BUTTON.into();
@@ -215,9 +219,9 @@ fn movement(
     }
 }
 
-fn toggle_turbo(mut events: EventWriter<AppStateEvent>, input: Res<ButtonInput<KeyCode>>) {
+fn toggle_turbo(mut next: ResMut<NextState<AppState>>, input: Res<ButtonInput<KeyCode>>) {
     if input.just_pressed(KeyCode::KeyT) {
-        events.send(AppStateEvent::ToggleTurbo);
+        next.message(AppStateMessage::ToggleTurbo);
     }
 }
 

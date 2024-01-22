@@ -3,15 +3,14 @@ use std::hash::Hash;
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
+use std::sync::Arc;
 
 use crate::event::Event;
 use crate::prelude::FromWorld;
-#[cfg(feature = "bevy_reflect")]
-use crate::reflect::ReflectResource;
 use crate::schedule::ScheduleLabel;
-use crate::system::{In, Resource};
+use crate::system::Resource;
 use crate::world::World;
-use crate::{self as bevy_ecs, event::EventReader};
+use crate::{self as bevy_ecs};
 
 pub use bevy_ecs_macros::States;
 use bevy_utils::{all_tuples, HashSet};
@@ -47,16 +46,20 @@ use super::{InternedScheduleLabel, Schedule, Schedules};
 /// ```
 pub trait States: 'static + Send + Sync + Clone + PartialEq + Eq + Hash + Debug {}
 
-/// This trait allows a state to be mutated directly using the [`NextState<S>`] resource.
+/// This trait allows a state to be mutated using the [`NextState<S>`] resource.
+///
+/// Specific operations are enabled by other traits, such as [`FreelyMutableState`]
+/// and [`MessageMutableState`].
 ///
 /// It is implemented as part of the [`States`] derive, but can also be added manually.
-pub trait FreelyMutableState: States {}
+pub trait MutableState: States {}
 
-/// A struct for identifying [`States`] that can only be mutated
-/// through typed messages.
-pub struct EventBasedStateMutation;
-impl sealed::StateMutationTypeSealed for EventBasedStateMutation {}
-impl StateMutationType for EventBasedStateMutation {}
+/// This trait allows a state to be mutated freely using the [`NextState<S>`] resource.
+///
+/// It provides the ability to set a state to a specific value, or remove the state.
+///
+/// It is implemented as part of the [`States`] derive, but can also be added manually.
+pub trait FreelyMutableState: MutableState {}
 
 /// The label of a [`Schedule`] that runs whenever [`State<S>`]
 /// enters this state.
@@ -179,36 +182,64 @@ impl<S: States> Deref for State<S> {
 ///     next_game_state.set(GameState::InGame);
 /// }
 /// ```
-#[derive(Resource, Debug, Default)]
-#[cfg_attr(
-    feature = "bevy_reflect",
-    derive(bevy_reflect::Reflect),
-    reflect(Resource)
-)]
-pub enum NextState<S: FreelyMutableState> {
-    /// No transition has been planned
-    #[default]
-    Unchanged,
-    /// There is a transition planned for state `S`
-    Set(S),
-    /// There is a planned removal of the state `S`
-    Remove,
+#[derive(Resource, Debug)]
+pub struct NextState<S: States>(Vec<Arc<dyn NextStateOperation<S>>>);
+
+impl<S: States> Default for NextState<S> {
+    fn default() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl<S: States> NextState<S> {
+    fn apply_operation(&mut self, operation: impl NextStateOperation<S> + 'static) {
+        self.0.push(Arc::new(operation));
+    }
+
+    /// Remove any planned changes to [`State<S>`]
+    pub fn reset(&mut self) {
+        self.0 = Vec::new();
+    }
+
+    /// Construct a new instance of [`NextState`] with a specific set of operations.
+    pub fn build(modify: fn(&mut Self) -> ()) -> Self {
+        let mut next = Self::default();
+        modify(&mut next);
+        next
+    }
+}
+
+trait NextStateOperation<S: States>: Debug + Send + Sync {
+    fn apply_state(&self, state: Option<S>) -> Option<S>;
+}
+
+#[derive(Debug)]
+struct Set<S: FreelyMutableState>(S);
+
+impl<S: FreelyMutableState> NextStateOperation<S> for Set<S> {
+    fn apply_state(&self, _: Option<S>) -> Option<S> {
+        Some(self.0.clone())
+    }
+}
+
+#[derive(Debug)]
+struct Remove<S: FreelyMutableState>(PhantomData<S>);
+
+impl<S: FreelyMutableState> NextStateOperation<S> for Remove<S> {
+    fn apply_state(&self, _: Option<S>) -> Option<S> {
+        None
+    }
 }
 
 impl<S: FreelyMutableState> NextState<S> {
     /// Tentatively set a planned state transition to `Some(state)`.
     pub fn set(&mut self, state: S) {
-        *self = Self::Set(state);
+        self.apply_operation(Set(state));
     }
 
     /// Tentatively set a planned removal of the [`State<S>`] resource.
     pub fn remove(&mut self) {
-        *self = Self::Remove;
-    }
-
-    /// Remove any planned changes to [`State<S>`]
-    pub fn reset(&mut self) {
-        *self = Self::Unchanged;
+        self.apply_operation(Remove(PhantomData));
     }
 }
 
@@ -367,27 +398,27 @@ pub fn setup_state_transitions_in_world(world: &mut World) {
 /// - Runs the [`OnTransition { from: exited_state, to: entered_state }`](OnTransition), if it exists.
 /// - Derive any dependant states through the [`ComputeDependantStates::<S>`] schedule, if it exists.
 /// - Runs the [`OnEnter(entered_state)`] schedule, if it exists.
-pub fn apply_state_transition<S: FreelyMutableState>(world: &mut World) {
+pub fn apply_state_transition<S: MutableState>(world: &mut World) {
     // We want to take the `NextState` resource,
     // but only mark it as changed if it wasn't empty.
-    let Some(next_state_resource) = world.get_resource::<NextState<S>>() else {
+    let Some(next_state_resource) = world.remove_resource::<NextState<S>>() else {
         return;
     };
 
-    match next_state_resource {
-        NextState::Set(new_state) => {
-            let new_state = new_state.clone();
-            internal_apply_state_transition(world, Some(new_state));
-        }
-        NextState::Remove => {
-            internal_apply_state_transition::<S>(world, None);
-        }
-        _ => {
-            return;
-        }
-    }
+    world.insert_resource(NextState::<S>::default());
 
-    world.insert_resource(NextState::<S>::Unchanged);
+    let current_state = world.get_resource::<State<S>>().map(|s| s.get().clone());
+
+    let new_state = next_state_resource
+        .0
+        .into_iter()
+        .fold(current_state.clone(), |current, operation| {
+            operation.apply_state(current)
+        });
+
+    if new_state != current_state {
+        internal_apply_state_transition(world, new_state);
+    }
 }
 
 /// Trait defining a state that is automatically derived from other [`States`].
@@ -506,57 +537,36 @@ macro_rules! impl_state_set_sealed_tuples {
 
 all_tuples!(impl_state_set_sealed_tuples, 1, 15, S, s);
 
-/// Trait defining a state that can only be mutated through Events.
-pub trait EventBasedState: 'static + Send + Sync + Clone + PartialEq + Eq + Hash + Debug {
+/// Trait exposing message-based mutability to [`MutableState`]s.
+pub trait MessageMutableState: MutableState {
     /// The type of message this state processes.
-    type Event: crate::event::Event;
+    type Message: Debug + Send + Sync + Clone;
 
     /// This function applies a given message to the state, and outputs a new version of the state.
     /// It is called automatically by during state transitions, when events have been published.
-    ///
-    /// Note that ordering of events within the same frame may be non-deterministic.
-    fn process(current: Option<Self>, event: &Self::Event) -> Option<Self>;
+    fn process(current: Option<Self>, message: Self::Message) -> Option<Self>;
 }
 
-/// This system takes all the recent events for a given [`EventBasedState`]
-/// and applies them to the current state to return
-/// an updated version.
-///
-/// If the updated version is unchanged, it will return None.
-pub fn process_state_events<S: EventBasedState + States>(
-    mut events: EventReader<S::Event>,
-    current: Option<crate::prelude::Res<State<S>>>,
-) -> Option<Option<S>> {
-    let mut current = current.map(|v| v.get().clone());
-    let original = current.clone();
+#[derive(Debug)]
+struct ApplyMessages<S: MessageMutableState>(S::Message);
 
-    for event in events.read() {
-        current = S::process(current, event);
-    }
-
-    if current != original {
-        Some(current)
-    } else {
-        None
+impl<S: MessageMutableState> NextStateOperation<S> for ApplyMessages<S> {
+    fn apply_state(&self, value: Option<S>) -> Option<S> {
+        S::process(value, self.0.clone())
     }
 }
 
-/// This system takes the results of [`process_state_events<S>`],
-/// and sets them as them current state, as well as triggering any
-/// transition-related schedules.
-pub fn apply_updated_event_state<S: EventBasedState + States>(
-    In(updated): In<Option<Option<S>>>,
-    world: &mut World,
-) {
-    if let Some(updated) = updated {
-        internal_apply_state_transition(world, updated);
+impl<S: MessageMutableState> NextState<S> {
+    /// Add a message to the mutation queue
+    pub fn message(&mut self, message: S::Message) {
+        self.apply_operation(ApplyMessages(message));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{self as bevy_ecs, event::Events, system::IntoSystem};
+    use crate::{self as bevy_ecs};
 
     #[derive(States, PartialEq, Eq, Debug, Default, Hash, Clone)]
     enum SimpleState {
@@ -600,7 +610,7 @@ mod tests {
         assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::A);
         assert!(!world.contains_resource::<State<TestComputedState>>());
 
-        world.insert_resource(NextState::Set(SimpleState::B(true)));
+        world.insert_resource(NextState::build(|s| s.set(SimpleState::B(true))));
         world.run_schedule(StateTransition);
         assert_eq!(
             world.resource::<State<SimpleState>>().0,
@@ -611,7 +621,7 @@ mod tests {
             TestComputedState::BisTrue
         );
 
-        world.insert_resource(NextState::Set(SimpleState::B(false)));
+        world.insert_resource(NextState::build(|s| s.set(SimpleState::B(false))));
         world.run_schedule(StateTransition);
         assert_eq!(
             world.resource::<State<SimpleState>>().0,
@@ -622,7 +632,7 @@ mod tests {
             TestComputedState::BisFalse
         );
 
-        world.insert_resource(NextState::Set(SimpleState::A));
+        world.insert_resource(NextState::build(|s| s.set(SimpleState::A)));
         world.run_schedule(StateTransition);
         assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::A);
         assert!(!world.contains_resource::<State<TestComputedState>>());
@@ -690,13 +700,15 @@ mod tests {
         );
         assert!(!world.contains_resource::<State<ComplexComputedState>>());
 
-        world.insert_resource(NextState::Set(SimpleState::B(true)));
+        world.insert_resource(NextState::build(|s| s.set(SimpleState::B(true))));
         world.run_schedule(StateTransition);
         assert!(!world.contains_resource::<State<ComplexComputedState>>());
 
-        world.insert_resource(NextState::Set(OtherState {
-            a_flexible_value: "felix",
-            another_value: 13,
+        world.insert_resource(NextState::build(|s| {
+            s.set(OtherState {
+                a_flexible_value: "felix",
+                another_value: 13,
+            })
         }));
         world.run_schedule(StateTransition);
         assert_eq!(
@@ -704,10 +716,12 @@ mod tests {
             ComplexComputedState::InTrueBAndUsizeAbove8
         );
 
-        world.insert_resource(NextState::Set(SimpleState::A));
-        world.insert_resource(NextState::Set(OtherState {
-            a_flexible_value: "jane",
-            another_value: 13,
+        world.insert_resource(NextState::build(|s| s.set(SimpleState::A)));
+        world.insert_resource(NextState::build(|s| {
+            s.set(OtherState {
+                a_flexible_value: "jane",
+                another_value: 13,
+            })
         }));
         world.run_schedule(StateTransition);
         assert_eq!(
@@ -715,16 +729,18 @@ mod tests {
             ComplexComputedState::InAAndStrIsBobOrJane
         );
 
-        world.insert_resource(NextState::Set(SimpleState::B(false)));
-        world.insert_resource(NextState::Set(OtherState {
-            a_flexible_value: "jane",
-            another_value: 13,
+        world.insert_resource(NextState::build(|s| s.set(SimpleState::B(false))));
+        world.insert_resource(NextState::build(|s| {
+            s.set(OtherState {
+                a_flexible_value: "jane",
+                another_value: 13,
+            })
         }));
         world.run_schedule(StateTransition);
         assert!(!world.contains_resource::<State<ComplexComputedState>>());
     }
 
-    #[derive(Event, PartialEq, Eq, Hash, Debug, Clone)]
+    #[derive(PartialEq, Eq, Hash, Debug, Clone)]
     enum ModifyState {
         GoToA,
         GoToB,
@@ -732,31 +748,33 @@ mod tests {
         Deactivate,
     }
 
-    fn process(state: Option<EventState>, event: &ModifyState) -> Option<EventState> {
-        match event {
-            ModifyState::GoToB => match state {
-                Some(EventState::A) => Some(EventState::B(false)),
-                _ => state,
-            },
-            ModifyState::Activate => match state {
-                Some(EventState::B(_)) => Some(EventState::B(true)),
-                _ => state,
-            },
-            ModifyState::Deactivate => match state {
-                Some(EventState::B(_)) => Some(EventState::B(false)),
-                _ => state,
-            },
-            ModifyState::GoToA => Some(EventState::A),
-        }
-    }
-
     #[derive(States, PartialEq, Eq, Debug, Default, Hash, Clone)]
-    #[event(ModifyState, process)]
-
     enum EventState {
         #[default]
         A,
         B(bool),
+    }
+
+    impl MessageMutableState for EventState {
+        type Message = ModifyState;
+
+        fn process(state: Option<EventState>, event: ModifyState) -> Option<EventState> {
+            match event {
+                ModifyState::GoToB => match state {
+                    Some(EventState::A) => Some(EventState::B(false)),
+                    _ => state,
+                },
+                ModifyState::Activate => match state {
+                    Some(EventState::B(_)) => Some(EventState::B(true)),
+                    _ => state,
+                },
+                ModifyState::Deactivate => match state {
+                    Some(EventState::B(_)) => Some(EventState::B(false)),
+                    _ => state,
+                },
+                ModifyState::GoToA => Some(EventState::A),
+            }
+        }
     }
 
     #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
@@ -767,56 +785,58 @@ mod tests {
         let mut world = World::new();
 
         world.init_resource::<State<EventState>>();
-        world.init_resource::<Events<ModifyState>>();
 
         let mut schedules = Schedules::new();
         let mut apply_changes = Schedule::new(ManualStateTransitions);
-        apply_changes.add_systems(
-            process_state_events::<EventState>.pipe(apply_updated_event_state::<EventState>),
-        );
+        apply_changes.add_systems(apply_state_transition::<EventState>);
         schedules.insert(apply_changes);
-        let mut event_update = Schedule::new(EventUpdate);
-        event_update.add_systems(bevy_ecs::event::event_update_system::<ModifyState>);
-        schedules.insert(event_update);
 
         world.insert_resource(schedules);
 
         setup_state_transitions_in_world(&mut world);
 
-        world.send_event(ModifyState::GoToB);
-        world.run_schedule(EventUpdate);
+        world.insert_resource(NextState::<EventState>::build(|s| {
+            s.message(ModifyState::GoToB)
+        }));
         world.run_schedule(StateTransition);
-        world.run_schedule(EventUpdate);
         assert_eq!(
             world.resource::<State<EventState>>().0,
             EventState::B(false)
         );
 
-        world.send_event(ModifyState::Activate);
-        world.run_schedule(EventUpdate);
+        world.insert_resource(NextState::<EventState>::build(|s| {
+            s.message(ModifyState::Activate)
+        }));
+
         world.run_schedule(StateTransition);
-        world.run_schedule(EventUpdate);
+
         assert_eq!(world.resource::<State<EventState>>().0, EventState::B(true));
 
-        world.send_event(ModifyState::GoToB);
-        world.run_schedule(EventUpdate);
+        world.insert_resource(NextState::<EventState>::build(|s| {
+            s.message(ModifyState::GoToB)
+        }));
+
         world.run_schedule(StateTransition);
-        world.run_schedule(EventUpdate);
+
         assert_eq!(world.resource::<State<EventState>>().0, EventState::B(true));
 
-        world.send_event(ModifyState::Deactivate);
-        world.run_schedule(EventUpdate);
+        world.insert_resource(NextState::<EventState>::build(|s| {
+            s.message(ModifyState::Deactivate)
+        }));
+
         world.run_schedule(StateTransition);
-        world.run_schedule(EventUpdate);
+
         assert_eq!(
             world.resource::<State<EventState>>().0,
             EventState::B(false)
         );
 
-        world.send_event(ModifyState::GoToA);
-        world.run_schedule(EventUpdate);
+        world.insert_resource(NextState::<EventState>::build(|s| {
+            s.message(ModifyState::GoToA)
+        }));
+
         world.run_schedule(StateTransition);
-        world.run_schedule(EventUpdate);
+
         assert_eq!(world.resource::<State<EventState>>().0, EventState::A);
     }
 }

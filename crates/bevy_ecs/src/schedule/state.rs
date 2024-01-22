@@ -708,7 +708,7 @@ mod tests {
             s.set(OtherState {
                 a_flexible_value: "felix",
                 another_value: 13,
-            })
+            });
         }));
         world.run_schedule(StateTransition);
         assert_eq!(
@@ -721,7 +721,7 @@ mod tests {
             s.set(OtherState {
                 a_flexible_value: "jane",
                 another_value: 13,
-            })
+            });
         }));
         world.run_schedule(StateTransition);
         assert_eq!(
@@ -734,7 +734,7 @@ mod tests {
             s.set(OtherState {
                 a_flexible_value: "jane",
                 another_value: 13,
-            })
+            });
         }));
         world.run_schedule(StateTransition);
         assert!(!world.contains_resource::<State<ComplexComputedState>>());
@@ -796,7 +796,7 @@ mod tests {
         setup_state_transitions_in_world(&mut world);
 
         world.insert_resource(NextState::<EventState>::build(|s| {
-            s.message(ModifyState::GoToB)
+            s.message(ModifyState::GoToB);
         }));
         world.run_schedule(StateTransition);
         assert_eq!(
@@ -805,7 +805,7 @@ mod tests {
         );
 
         world.insert_resource(NextState::<EventState>::build(|s| {
-            s.message(ModifyState::Activate)
+            s.message(ModifyState::Activate);
         }));
 
         world.run_schedule(StateTransition);
@@ -813,7 +813,7 @@ mod tests {
         assert_eq!(world.resource::<State<EventState>>().0, EventState::B(true));
 
         world.insert_resource(NextState::<EventState>::build(|s| {
-            s.message(ModifyState::GoToB)
+            s.message(ModifyState::GoToB);
         }));
 
         world.run_schedule(StateTransition);
@@ -821,7 +821,7 @@ mod tests {
         assert_eq!(world.resource::<State<EventState>>().0, EventState::B(true));
 
         world.insert_resource(NextState::<EventState>::build(|s| {
-            s.message(ModifyState::Deactivate)
+            s.message(ModifyState::Deactivate);
         }));
 
         world.run_schedule(StateTransition);
@@ -832,7 +832,7 @@ mod tests {
         );
 
         world.insert_resource(NextState::<EventState>::build(|s| {
-            s.message(ModifyState::GoToA)
+            s.message(ModifyState::GoToA);
         }));
 
         world.run_schedule(StateTransition);

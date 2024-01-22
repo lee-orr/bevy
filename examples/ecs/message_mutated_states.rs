@@ -61,7 +61,7 @@ impl MessageMutableState for AppState {
             }
         }
         current
-}
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash)]

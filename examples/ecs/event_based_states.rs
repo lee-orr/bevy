@@ -1,11 +1,11 @@
-//! This example illustrates the use of [`EventBasedStates`].
+//! This example illustrates the use of [`MessageMutableState`]s.
 //!
-//! These are [`States`], just like the ones in the `state` example, but with one
-//! caveat: you can only modify them through a set of strongly typed events.
+//! These are [`States`], just like the ones in the `state` example, that
+//! can be modified using messages.
 //!
-//! This allows you to define the actual control flow of the app in the event
-//! handler alongisde the type definition, and then issue those events from anywhere
-//! else in your codebase. Events that aren't applicable at a given time just get ignored,
+//! This allows you to define the actual control flow of the app in the message
+//! handler alongisde the type definition, and then issue those messages from anywhere
+//! else in your codebase. Messages that aren't applicable at a given time just get ignored,
 //! and there is no need to worry about potential breakage or drift between areas that modify
 //! the state.
 //!
@@ -19,6 +19,13 @@
 use bevy::prelude::*;
 use bevy_internal::ecs::schedule::MessageMutableState;
 
+// Unlike [`ComputedStates`], [`MessageMutableState`]s are built on
+// the same mutation processes as normal [`States`]. As such,
+// you can derive states.
+//
+// However, if you want to prevent the normal set/remove options and only allow
+// messages to modify state, you would need to manually implement
+// the [`States`] and [`MutableState`] traits.
 #[derive(Clone, Copy, Default, Eq, PartialEq, Hash, States, Debug)]
 enum AppState {
     #[default]
@@ -76,15 +83,11 @@ impl ComputedStates for InGame {
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .init_state::<AppState>()
+        .init_state::<AppState>() // This is a normal state, so we can initialize it as normal.
+        // And the rest of the application initialization is the same as any other state based application.
         .add_computed_state::<InGame>()
         .add_systems(Startup, setup)
-        // This system runs when we enter `AppState::Menu`, during the `StateTransition` schedule.
-        // All systems from the exit schedule of the state we're leaving are run first,
-        // and then all systems from the enter schedule of the state we're entering are run second.
         .add_systems(OnEnter(AppState::Menu), setup_menu)
-        // By contrast, update systems are stored in the `Update` schedule. They simply
-        // check the value of the `State<T>` resource to see if they should run each frame.
         .add_systems(Update, menu.run_if(in_state(AppState::Menu)))
         .add_systems(OnExit(AppState::Menu), cleanup_menu)
         .add_systems(OnEnter(InGame), setup_game)
@@ -163,6 +166,8 @@ fn menu(
         match *interaction {
             Interaction::Pressed => {
                 *color = PRESSED_BUTTON.into();
+                // Unlike the `state` example, here we're using the [`NextState<S>::message`] function
+                // to modify the state
                 next.message(AppStateMessage::EnterGame);
             }
             Interaction::Hovered => {
@@ -221,6 +226,8 @@ fn movement(
 
 fn toggle_turbo(mut next: ResMut<NextState<AppState>>, input: Res<ButtonInput<KeyCode>>) {
     if input.just_pressed(KeyCode::KeyT) {
+        // Using the message, we can trigger the toggle and not need to worry about the actual state logic,
+        // since we have the state itself handle that.
         next.message(AppStateMessage::ToggleTurbo);
     }
 }

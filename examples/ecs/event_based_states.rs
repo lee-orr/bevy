@@ -10,8 +10,8 @@
 //! the state.
 //!
 //! In this case, we're transitioning from a `Menu` state to an `InGame` state, with the addition of
-//! two layers of TurboMode. When you tap the `T` key, the game will move to the first TurboMode.
-//! And when you tap it again, it'll move to the second TurboMode. The third tap will return to normal gameplay.
+//! two layers of [`TurboMode`]. When you tap the `T` key, the game will move to the first [`TurboMode`].
+//! And when you tap it again, it'll move to the second [`TurboMode`]. The third tap will return to normal gameplay.
 //!
 //! We're also using functionality provided by [`ComputedStates`] - as illustrated in the `computed_states` example,
 //! but will not be focusing on explaing it here.
@@ -42,14 +42,13 @@ fn process_app_state(mut current: Option<AppState>, event: &AppStateEvent) -> Op
                 current = Some(AppState::InGame { turbo: 0 });
             }
         },
-        AppStateEvent::ToggleTurbo => match &current {
-            Some(AppState::InGame { turbo }) => {
+        AppStateEvent::ToggleTurbo => {
+            if let Some(AppState::InGame { turbo }) = &current {
                 current = Some(AppState::InGame {
                     turbo: if *turbo < 2 { turbo + 1 } else { 0 },
-                })
+                });
             }
-            _ => {}
-        },
+        }
     }
     current
 }

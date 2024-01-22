@@ -554,10 +554,15 @@ pub trait EventBasedState: 'static + Send + Sync + Clone + PartialEq + Eq + Hash
     fn process(current: Option<Self>, event: &Self::Event) -> Option<Self>;
 }
 
+/// This system takes all the recent events for a given [`EventBasedState`]
+/// and applies them to the current state to return
+/// an updated version.
+///
+/// If the updated version is unchanged, it will return None.
 pub fn process_state_events<S: EventBasedState + States>(
     mut events: EventReader<S::Event>,
     current: Option<crate::prelude::Res<State<S>>>,
-) -> (bool, Option<S>) {
+) -> Option<Option<S>> {
     let mut current = current.map(|v| v.get().clone());
     let original = current.clone();
 
@@ -565,14 +570,21 @@ pub fn process_state_events<S: EventBasedState + States>(
         current = S::process(current, event);
     }
 
-    (current != original, current)
+    if current != original {
+        Some(current)
+    } else {
+        None
+    }
 }
 
+/// This system takes the results of [`process_state_events<S>`],
+/// and sets them as them current state, as well as triggering any
+/// transition-related schedules.
 pub fn apply_updated_event_state<S: EventBasedState + States>(
-    In((changed, updated)): In<(bool, Option<S>)>,
+    In(updated): In<Option<Option<S>>>,
     world: &mut World,
 ) {
-    if changed {
+    if let Some(updated) = updated {
         internal_apply_state_transition(world, updated);
     }
 }
@@ -580,7 +592,7 @@ pub fn apply_updated_event_state<S: EventBasedState + States>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{self as bevy_ecs, event::Events, schedule::apply_deferred, system::IntoSystem};
+    use crate::{self as bevy_ecs, event::Events, system::IntoSystem};
 
     #[derive(States, PartialEq, Eq, Debug, Default, Hash, Clone)]
     enum SimpleState {
@@ -771,7 +783,6 @@ mod tests {
                 _ => state,
             },
             ModifyState::GoToA => Some(EventState::A),
-            _ => state,
         }
     }
 
@@ -828,6 +839,15 @@ mod tests {
         world.run_schedule(StateTransition);
         world.run_schedule(EventUpdate);
         assert_eq!(world.resource::<State<EventState>>().0, EventState::B(true));
+
+        world.send_event(ModifyState::Deactivate);
+        world.run_schedule(EventUpdate);
+        world.run_schedule(StateTransition);
+        world.run_schedule(EventUpdate);
+        assert_eq!(
+            world.resource::<State<EventState>>().0,
+            EventState::B(false)
+        );
 
         world.send_event(ModifyState::GoToA);
         world.run_schedule(EventUpdate);

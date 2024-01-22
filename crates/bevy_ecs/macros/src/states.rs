@@ -1,5 +1,5 @@
 use proc_macro::TokenStream;
-use quote::{format_ident, quote, ToTokens};
+use quote::{format_ident, quote};
 use syn::{parse::Parse, parse_macro_input, DeriveInput, Path, Token};
 
 use crate::bevy_ecs_path;
@@ -11,8 +11,6 @@ struct EventBasedStateStruct {
 
 impl Parse for EventBasedStateStruct {
     fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let source = input.to_string();
-
         let event_type = input.parse()?;
         input.parse::<Token![,]>()?;
         let process_function = input.parse()?;

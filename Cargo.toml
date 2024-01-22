@@ -1495,6 +1495,17 @@ category = "ECS (Entity Component System)"
 wasm = false
 
 [[example]]
+name = "event_based_states"
+path = "examples/ecs/event_based_states.rs"
+doc-scrape-examples = true
+
+[package.metadata.example.event_based_states]
+name = "Event Based States"
+description = "Advanced state manipulation with Event Based States"
+category = "ECS (Entity Component System)"
+wasm = false
+
+[[example]]
 name = "system_piping"
 path = "examples/ecs/system_piping.rs"
 doc-scrape-examples = true

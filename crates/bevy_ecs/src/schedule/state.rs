@@ -4,14 +4,14 @@ use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
 
-use crate::{self as bevy_ecs, event::EventReader};
 use crate::event::Event;
 use crate::prelude::FromWorld;
 #[cfg(feature = "bevy_reflect")]
 use crate::reflect::ReflectResource;
 use crate::schedule::ScheduleLabel;
-use crate::system::{Resource, In};
+use crate::system::{In, Resource};
 use crate::world::World;
+use crate::{self as bevy_ecs, event::EventReader};
 
 pub use bevy_ecs_macros::States;
 use bevy_utils::{all_tuples, HashSet};
@@ -185,8 +185,6 @@ impl<S: States> Deref for State<S> {
         self.get()
     }
 }
-
-
 
 /// The next state of [`State<S>`].
 ///
@@ -551,18 +549,14 @@ pub trait EventBasedState: 'static + Send + Sync + Clone + PartialEq + Eq + Hash
 
     /// This function applies a given message to the state, and outputs a new version of the state.
     /// It is called automatically by during state transitions, when events have been published.
-    /// 
+    ///
     /// Note that ordering of events within the same frame may be non-deterministic.
-    fn process(
-        current: Option<Self>,
-        event: &Self::Event
-    ) -> Option<Self>;
+    fn process(current: Option<Self>, event: &Self::Event) -> Option<Self>;
 }
-
 
 pub fn process_state_events<S: EventBasedState + States>(
     mut events: EventReader<S::Event>,
-    current: Option<crate::prelude::Res<State<S>>>
+    current: Option<crate::prelude::Res<State<S>>>,
 ) -> (bool, Option<S>) {
     let mut current = current.map(|v| v.get().clone());
     let original = current.clone();
@@ -574,7 +568,10 @@ pub fn process_state_events<S: EventBasedState + States>(
     (current != original, current)
 }
 
-pub fn apply_updated_event_state<S: EventBasedState + States>(In((changed, updated)): In<(bool, Option<S>)>, world: &mut World) {
+pub fn apply_updated_event_state<S: EventBasedState + States>(
+    In((changed, updated)): In<(bool, Option<S>)>,
+    world: &mut World,
+) {
     if changed {
         internal_apply_state_transition(world, updated);
     }
@@ -583,7 +580,7 @@ pub fn apply_updated_event_state<S: EventBasedState + States>(In((changed, updat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{self as bevy_ecs, system::IntoSystem, schedule::apply_deferred, event::Events};
+    use crate::{self as bevy_ecs, event::Events, schedule::apply_deferred, system::IntoSystem};
 
     #[derive(States, PartialEq, Eq, Debug, Default, Hash, Clone)]
     enum SimpleState {
@@ -756,25 +753,25 @@ mod tests {
         GoToA,
         GoToB,
         Activate,
-        Deactivate
+        Deactivate,
     }
 
     fn process(state: Option<EventState>, event: &ModifyState) -> Option<EventState> {
         match event {
             ModifyState::GoToB => match state {
                 Some(EventState::A) => Some(EventState::B(false)),
-                _ => state
-            }
+                _ => state,
+            },
             ModifyState::Activate => match state {
                 Some(EventState::B(_)) => Some(EventState::B(true)),
-                _ => state
-            }
+                _ => state,
+            },
             ModifyState::Deactivate => match state {
                 Some(EventState::B(_)) => Some(EventState::B(false)),
-                _ => state
-            }
+                _ => state,
+            },
             ModifyState::GoToA => Some(EventState::A),
-            _ => state
+            _ => state,
         }
     }
 
@@ -793,14 +790,15 @@ mod tests {
     #[test]
     fn can_process_event_based_state() {
         let mut world = World::new();
-        
+
         world.init_resource::<State<EventState>>();
         world.init_resource::<Events<ModifyState>>();
 
-
         let mut schedules = Schedules::new();
         let mut apply_changes = Schedule::new(ManualStateTransitions);
-        apply_changes.add_systems(process_state_events::<EventState>.pipe(apply_updated_event_state::<EventState>));
+        apply_changes.add_systems(
+            process_state_events::<EventState>.pipe(apply_updated_event_state::<EventState>),
+        );
         schedules.insert(apply_changes);
         let mut event_update = Schedule::new(EventUpdate);
         event_update.add_systems(bevy_ecs::event::event_update_system::<ModifyState>);
@@ -823,27 +821,18 @@ mod tests {
         world.run_schedule(EventUpdate);
         world.run_schedule(StateTransition);
         world.run_schedule(EventUpdate);
-        assert_eq!(
-            world.resource::<State<EventState>>().0,
-            EventState::B(true)
-        );
+        assert_eq!(world.resource::<State<EventState>>().0, EventState::B(true));
 
         world.send_event(ModifyState::GoToB);
         world.run_schedule(EventUpdate);
         world.run_schedule(StateTransition);
         world.run_schedule(EventUpdate);
-        assert_eq!(
-            world.resource::<State<EventState>>().0,
-            EventState::B(true)
-        );
+        assert_eq!(world.resource::<State<EventState>>().0, EventState::B(true));
 
         world.send_event(ModifyState::GoToA);
         world.run_schedule(EventUpdate);
         world.run_schedule(StateTransition);
         world.run_schedule(EventUpdate);
-        assert_eq!(
-            world.resource::<State<EventState>>().0,
-            EventState::A
-        );
+        assert_eq!(world.resource::<State<EventState>>().0, EventState::A);
     }
 }

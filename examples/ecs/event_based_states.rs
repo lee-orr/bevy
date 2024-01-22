@@ -1,8 +1,8 @@
 //! This example illustrates the use of [`EventBasedStates`].
-//! 
+//!
 //! These are [`States`], just like the ones in the `state` example, but with one
 //! caveat: you can only modify them through a set of strongly typed events.
-//! 
+//!
 //! This allows you to define the actual control flow of the app in the event
 //! handler alongisde the type definition, and then issue those events from anywhere
 //! else in your codebase. Events that aren't applicable at a given time just get ignored,
@@ -12,7 +12,7 @@
 //! In this case, we're transitioning from a `Menu` state to an `InGame` state, with the addition of
 //! two layers of TurboMode. When you tap the `T` key, the game will move to the first TurboMode.
 //! And when you tap it again, it'll move to the second TurboMode. The third tap will return to normal gameplay.
-//! 
+//!
 //! We're also using functionality provided by [`ComputedStates`] - as illustrated in the `computed_states` example,
 //! but will not be focusing on explaing it here.
 
@@ -23,26 +23,30 @@ use bevy::prelude::*;
 enum AppState {
     #[default]
     Menu,
-    InGame { turbo: u8 },
+    InGame {
+        turbo: u8,
+    },
 }
 
 #[derive(Event)]
 enum AppStateEvent {
     EnterGame,
-    ToggleTurbo
+    ToggleTurbo,
 }
 
-fn process_app_state(mut current: Option<AppState>, event: &AppStateEvent) -> Option<AppState>{
+fn process_app_state(mut current: Option<AppState>, event: &AppStateEvent) -> Option<AppState> {
     match event {
         AppStateEvent::EnterGame => match &current {
-            Some(AppState::InGame { .. }) => {},
+            Some(AppState::InGame { .. }) => {}
             _ => {
                 current = Some(AppState::InGame { turbo: 0 });
             }
         },
         AppStateEvent::ToggleTurbo => match &current {
             Some(AppState::InGame { turbo }) => {
-                current = Some(AppState::InGame { turbo: if *turbo < 2 { turbo + 1 } else { 0 } })
+                current = Some(AppState::InGame {
+                    turbo: if *turbo < 2 { turbo + 1 } else { 0 },
+                })
             }
             _ => {}
         },
@@ -202,10 +206,11 @@ fn movement(
         }
 
         if direction != Vec3::ZERO {
-            let speed = SPEED * match app_state.get() {
-                AppState::Menu => 0.0,
-                AppState::InGame { turbo } => (*turbo as f32) + 1.0,
-            };
+            let speed = SPEED
+                * match app_state.get() {
+                    AppState::Menu => 0.0,
+                    AppState::InGame { turbo } => (*turbo as f32) + 1.0,
+                };
             transform.translation += direction.normalize() * speed * time.delta_seconds();
         }
     }
@@ -217,9 +222,9 @@ fn toggle_turbo(mut events: EventWriter<AppStateEvent>, input: Res<ButtonInput<K
     }
 }
 
-fn change_color(time: Res<Time>, mut query: Query<&mut Sprite>,
-    app_state: Res<State<AppState>>,) {
-        let time_mod = 0.5 + match app_state.get() {
+fn change_color(time: Res<Time>, mut query: Query<&mut Sprite>, app_state: Res<State<AppState>>) {
+    let time_mod = 0.5
+        + match app_state.get() {
             AppState::Menu => 0.0,
             AppState::InGame { turbo } => (*turbo as f32) * 2.0,
         };

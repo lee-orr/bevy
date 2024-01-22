@@ -3,10 +3,12 @@ pub use bevy_derive::AppLabel;
 use bevy_ecs::{
     prelude::*,
     schedule::{
-        apply_state_transition, common_conditions::run_once as run_once_condition,
-        run_enter_schedule, setup_state_transitions_in_world, ComputedStates, FreeStateMutation,
-        InternedScheduleLabel, IntoSystemConfigs, IntoSystemSetConfigs, ManualStateTransitions,
-        ScheduleBuildSettings, ScheduleLabel, StateMutation, StateTransitionEvent, EventBasedState, EventBasedStateMutation, process_state_events, apply_updated_event_state,
+        apply_state_transition, apply_updated_event_state,
+        common_conditions::run_once as run_once_condition, process_state_events,
+        run_enter_schedule, setup_state_transitions_in_world, ComputedStates, EventBasedState,
+        EventBasedStateMutation, FreeStateMutation, InternedScheduleLabel, IntoSystemConfigs,
+        IntoSystemSetConfigs, ManualStateTransitions, ScheduleBuildSettings, ScheduleLabel,
+        StateMutation, StateTransitionEvent,
     },
 };
 use bevy_utils::{intern::Interned, thiserror::Error, tracing::debug, HashMap, HashSet};
@@ -452,7 +454,7 @@ impl App {
 
         self
     }
-    
+
     /// Initializes an [`EventBasedState`] with standard starting values.
     ///
     /// If the [`EventBasedState`] already exists, nothing happens.
@@ -462,19 +464,21 @@ impl App {
     ///
     /// If you would like to control how other systems run based on the current state,
     /// you can emulate this behavior using the [`in_state`] [`Condition`].
-    pub fn init_event_state<S: EventBasedState + StateMutation<MutationType = EventBasedStateMutation> + FromWorld>(
+    pub fn init_event_state<
+        S: EventBasedState + StateMutation<MutationType = EventBasedStateMutation> + FromWorld,
+    >(
         &mut self,
     ) -> &mut Self {
         if !self.world.contains_resource::<State<S>>() {
             setup_state_transitions_in_world(&mut self.world);
             self.init_resource::<State<S>>()
-            .add_event::<S::Event>()
+                .add_event::<S::Event>()
                 .add_event::<StateTransitionEvent<S>>()
                 .add_systems(
                     ManualStateTransitions,
                     (
                         run_enter_schedule::<S>.run_if(run_once_condition()),
-                        process_state_events::<S>.pipe(apply_updated_event_state::<S>)
+                        process_state_events::<S>.pipe(apply_updated_event_state::<S>),
                     )
                         .chain(),
                 );
@@ -491,7 +495,9 @@ impl App {
     ///
     /// If you would like to control how other systems run based on the current state,
     /// you can emulate this behavior using the [`in_state`] [`Condition`].
-    pub fn insert_event_state<S: EventBasedState + StateMutation<MutationType = EventBasedStateMutation>>(
+    pub fn insert_event_state<
+        S: EventBasedState + StateMutation<MutationType = EventBasedStateMutation>,
+    >(
         &mut self,
         state: S,
     ) -> &mut Self {
@@ -503,7 +509,7 @@ impl App {
                 ManualStateTransitions,
                 (
                     run_enter_schedule::<S>.run_if(run_once_condition()),
-                    process_state_events::<S>.pipe(apply_updated_event_state::<S>)
+                    process_state_events::<S>.pipe(apply_updated_event_state::<S>),
                 )
                     .chain(),
             );

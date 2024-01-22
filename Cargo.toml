@@ -1495,13 +1495,13 @@ category = "ECS (Entity Component System)"
 wasm = false
 
 [[example]]
-name = "event_based_states"
-path = "examples/ecs/event_based_states.rs"
+name = "message_mutated_states"
+path = "examples/ecs/message_mutated_states.rs"
 doc-scrape-examples = true
 
-[package.metadata.example.event_based_states]
-name = "Event Based States"
-description = "Advanced state manipulation with Event Based States"
+[package.metadata.example.message_mutated_states]
+name = "Message Mutated States"
+description = "Advanced state manipulation with Message Mutated States"
 category = "ECS (Entity Component System)"
 wasm = false
 

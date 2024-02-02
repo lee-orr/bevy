@@ -64,6 +64,13 @@ pub trait States: 'static + Send + Sync + Clone + PartialEq + Eq + Hash + Debug 
 /// It is implemented as part of the [`States`] derive, but can also be added manually.
 pub trait FreelyMutableState: States {}
 
+/// This trait allows a state to be manually removed and added using the [`NextState<S>`] resource
+///
+/// Standard [`States`] support this, however [`SubStates`] do not.
+///
+/// It is implemented as part of the [`States`] derive, but can also be added manually.
+pub trait ManualyRemovableState: FreelyMutableState {}
+
 /// The label of a [`Schedule`] that runs whenever [`State<S>`]
 /// enters this state.
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
@@ -209,6 +216,8 @@ pub enum NextState<S: FreelyMutableState> {
     Unchanged,
     /// There is a pending transition for state `S`
     Pending(S),
+    /// There is a pending removal of the [`State<S>`] resource
+    Remove,
 }
 
 impl<S: FreelyMutableState> NextState<S> {
@@ -220,6 +229,13 @@ impl<S: FreelyMutableState> NextState<S> {
     /// Remove any pending changes to [`State<S>`]
     pub fn reset(&mut self) {
         *self = Self::Unchanged;
+    }
+}
+
+impl<S: ManualyRemovableState> NextState<S> {
+    /// Tentatively remove the [`State<S>`] resource
+    pub fn remove(&mut self) {
+        *self = Self::Remove;
     }
 }
 
@@ -421,10 +437,37 @@ pub fn setup_state_transitions_in_world(world: &mut World) {
 /// - Runs the [`OnTransition { from: exited_state, to: entered_state }`](OnTransition), if it exists.
 /// - Derive any dependant states through the [`ComputeDependantStates::<S>`] schedule, if it exists.
 /// - Runs the [`OnEnter(entered_state)`] schedule, if it exists.
-///
-/// If the [`State<S>`] resource does not exist, it does nothing. Removing or adding states
-/// should be done at App creation or at your own risk.
 pub fn apply_state_transition<S: FreelyMutableState>(world: &mut World) {
+    let Some(next_state_resource) = world.get_resource::<NextState<S>>() else {
+        return;
+    };
+
+    match next_state_resource {
+        NextState::Pending(new_state) => {
+            let new_state = new_state.clone();
+            internal_apply_state_transition(world, Some(new_state));
+        }
+        NextState::Unchanged => {
+            // This is the default value, so we don't need to re-insert the resource
+            return;
+        }
+        // Removal is not supported in this case, and so it is ignored
+        NextState::Remove => {
+            internal_apply_state_transition::<S>(world, None);
+        }
+    }
+
+    world.insert_resource(NextState::<S>::Unchanged);
+}
+
+/// If a new state is queued in [`NextState<S>`], this system:
+/// - Takes the new state value from [`NextState<S>`] and updates [`State<S>`].
+/// - Sends a relevant [`StateTransitionEvent`]
+/// - Runs the [`OnExit(exited_state)`] schedule, if it exists.
+/// - Runs the [`OnTransition { from: exited_state, to: entered_state }`](OnTransition), if it exists.
+/// - Derive any dependant states through the [`ComputeDependantStates::<S>`] schedule, if it exists.
+/// - Runs the [`OnEnter(entered_state)`] schedule, if it exists.
+pub fn apply_non_removable_state_transition<S: FreelyMutableState>(world: &mut World) {
     // We want to check if the State and NextState resources exist
     let (Some(next_state_resource), Some(current_state)) = (
         world.get_resource::<NextState<S>>(),
@@ -444,6 +487,8 @@ pub fn apply_state_transition<S: FreelyMutableState>(world: &mut World) {
             // This is the default value, so we don't need to re-insert the resource
             return;
         }
+        // Removal is not supported in this case, and so it is ignored
+        NextState::Remove => {}
     }
 
     world.insert_resource(NextState::<S>::Unchanged);
@@ -946,6 +991,49 @@ mod tests {
         B(bool),
     }
 
+    #[test]
+    fn states_are_set_correctly_via_next_state() {
+        let mut world = World::new();
+        world.init_resource::<State<SimpleState>>();
+        let mut schedules = Schedules::new();
+
+        let mut apply_changes = Schedule::new(ManualStateTransitions);
+        apply_changes.add_systems(apply_state_transition::<SimpleState>);
+        schedules.insert(apply_changes);
+
+        world.insert_resource(schedules);
+
+        setup_state_transitions_in_world(&mut world);
+
+        world.run_schedule(StateTransition);
+        assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::A);
+
+        world.insert_resource(NextState::Pending(SimpleState::B(true)));
+        world.run_schedule(StateTransition);
+        assert_eq!(
+            world.resource::<State<SimpleState>>().0,
+            SimpleState::B(true)
+        );
+
+        world.insert_resource(NextState::<SimpleState>::Unchanged);
+        world.run_schedule(StateTransition);
+        assert_eq!(
+            world.resource::<State<SimpleState>>().0,
+            SimpleState::B(true)
+        );
+
+        world.insert_resource(NextState::<SimpleState>::Remove);
+        world.run_schedule(StateTransition);
+        assert!(!world.contains_resource::<State<SimpleState>>());
+
+        world.insert_resource(NextState::Pending(SimpleState::B(true)));
+        world.run_schedule(StateTransition);
+        assert_eq!(
+            world.resource::<State<SimpleState>>().0,
+            SimpleState::B(true)
+        );
+    }
+
     #[derive(PartialEq, Eq, Debug, Hash, Clone)]
     enum TestComputedState {
         BisTrue,
@@ -1025,7 +1113,7 @@ mod tests {
         SubState::register_state_exist_systems_in_schedules(&mut schedules);
         let mut apply_changes = Schedule::new(ManualStateTransitions);
         apply_changes.add_systems(apply_state_transition::<SimpleState>);
-        apply_changes.add_systems(apply_state_transition::<SubState>);
+        apply_changes.add_systems(apply_non_removable_state_transition::<SubState>);
         schedules.insert(apply_changes);
 
         world.insert_resource(schedules);
@@ -1083,7 +1171,7 @@ mod tests {
         SubStateOfComputed::register_state_exist_systems_in_schedules(&mut schedules);
         let mut apply_changes = Schedule::new(ManualStateTransitions);
         apply_changes.add_systems(apply_state_transition::<SimpleState>);
-        apply_changes.add_systems(apply_state_transition::<SubStateOfComputed>);
+        apply_changes.add_systems(apply_non_removable_state_transition::<SubStateOfComputed>);
         schedules.insert(apply_changes);
 
         world.insert_resource(schedules);

@@ -23,12 +23,20 @@ pub fn derive_states(input: TokenStream) -> TokenStream {
         .segments
         .push(format_ident!("FreelyMutableState").into());
 
+    let mut state_removal_trait_path = base_trait_path.clone();
+    state_removal_trait_path
+        .segments
+        .push(format_ident!("ManualyRemovableState").into());
+
     let struct_name = &ast.ident;
 
     quote! {
         impl #impl_generics #trait_path for #struct_name #ty_generics #where_clause {}
 
         impl #impl_generics #state_mutation_trait_path for #struct_name #ty_generics #where_clause {
+        }
+
+        impl #impl_generics #state_removal_trait_path for #struct_name #ty_generics #where_clause {
         }
     }
     .into()

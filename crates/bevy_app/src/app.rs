@@ -3,9 +3,8 @@ pub use bevy_derive::AppLabel;
 use bevy_ecs::{
     prelude::*,
     schedule::{
-        apply_non_removable_state_transition, apply_state_transition,
-        common_conditions::run_once as run_once_condition, run_enter_schedule,
-        setup_state_transitions_in_world, ComputedStates, FreelyMutableState,
+        apply_state_transition, common_conditions::run_once as run_once_condition,
+        run_enter_schedule, setup_state_transitions_in_world, ComputedStates, FreelyMutableState,
         InternedScheduleLabel, IntoSystemConfigs, IntoSystemSetConfigs, ManualStateTransitions,
         ScheduleBuildSettings, ScheduleLabel, StateTransitionEvent, SubStates,
     },
@@ -461,10 +460,7 @@ impl App {
             self.add_event::<StateTransitionEvent<S>>();
             let mut schedules = self.world.resource_mut::<Schedules>();
             S::register_state_exist_systems_in_schedules(schedules.as_mut());
-            self.add_systems(
-                ManualStateTransitions,
-                apply_non_removable_state_transition::<S>,
-            );
+            self.add_systems(ManualStateTransitions, apply_state_transition::<S>);
         }
 
         self

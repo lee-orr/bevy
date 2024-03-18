@@ -42,27 +42,24 @@ enum TutorialState {
 }
 
 // Because we have 4 distinct values of `AppState` that mean we're "InGame", we're going to define
-// a separate "InGame" type and implement `ComputedStates` for it.
+// a separate "InGame" type make it a ComputedState.
 // This allows us to only need to check against one type
 // when otherwise we'd need to check against multiple.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+//
+// To start, we need to derive States - just like before
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, States)]
+// But then we add the "computed" attribute - which takes 2 parameters
+#[computed(
+    // The type of the state we depend on
+    AppState,
+    // And a closure definiting the computation function - which takes in an option of the parent state
+    // and returns an option of Self
+    |sources| match sources {
+    // No matter what the value of `paused` or `turbo` is, we're still in the game rather than a menu
+    Some(AppState::InGame { .. }) => Some(Self),
+    _ => None,
+})]
 struct InGame;
-
-impl ComputedStates for InGame {
-    // Our computed state depends on `AppState`, so we need to specify it as the SourceStates type.
-    type SourceStates = AppState;
-
-    // The compute function takes in the `SourceStates` wrapped in `Option`'s.
-    fn compute(sources: Option<AppState>) -> Option<Self> {
-        // You might notice that InGame has no values - instead, in this case, the `State<InGame>` resource only exists
-        // if the `compute` function would return `Some` - so only when we are in game.
-        match sources {
-            // No matter what the value of `paused` or `turbo` is, we're still in the game rather than a menu
-            Some(AppState::InGame { .. }) => Some(Self),
-            _ => None,
-        }
-    }
-}
 
 // Similarly, we want to have the TurboMode state - so we'll define that now.
 //
@@ -73,19 +70,13 @@ impl ComputedStates for InGame {
 // if you aren't in game, for example - while still having the
 // flexibility to check for the states as if they were completely unrelated.
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, States)]
+#[computed(AppState, |sources|
+    match sources {
+        Some(AppState::InGame { turbo: true, .. }) => Some(Self),
+        _ => None,
+    })]
 struct TurboMode;
-
-impl ComputedStates for TurboMode {
-    type SourceStates = AppState;
-
-    fn compute(sources: Option<AppState>) -> Option<Self> {
-        match sources {
-            Some(AppState::InGame { turbo: true, .. }) => Some(Self),
-            _ => None,
-        }
-    }
-}
 
 // For the [`IsPaused`] state, we'll actually use an `enum` - because the difference between `Paused` and `NotPaused`
 // involve activating different systems.
@@ -97,24 +88,18 @@ impl ComputedStates for TurboMode {
 // - it doesn't exist - this is when being paused is meaningless, like in the menu.
 // - it is `NotPaused` - in which elements like the movement system are active.
 // - it is `Paused` - in which those game systems are inactive, and a pause screen is shown.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, States)]
+#[computed(AppState, |sources|
+    // Here we convert from our [`AppState`] to all potential [`IsPaused`] versions.
+    match sources {
+        Some(AppState::InGame { paused: true, .. }) => Some(Self::Paused),
+        Some(AppState::InGame { paused: false, .. }) => Some(Self::NotPaused),
+        // If `AppState` is not `InGame`, pausing is meaningless, and so we set it to `None`.
+        _ => None,
+    })]
 enum IsPaused {
     NotPaused,
     Paused,
-}
-
-impl ComputedStates for IsPaused {
-    type SourceStates = AppState;
-
-    fn compute(sources: Option<AppState>) -> Option<Self> {
-        // Here we convert from our [`AppState`] to all potential [`IsPaused`] versions.
-        match sources {
-            Some(AppState::InGame { paused: true, .. }) => Some(Self::Paused),
-            Some(AppState::InGame { paused: false, .. }) => Some(Self::NotPaused),
-            // If `AppState` is not `InGame`, pausing is meaningless, and so we set it to `None`.
-            _ => None,
-        }
-    }
 }
 
 // Lastly, we have our tutorial, which actually has a more complex derivation.
@@ -122,14 +107,9 @@ impl ComputedStates for IsPaused {
 // Like `IsPaused`, the tutorial has a few fully distinct possible states, so we want to represent them
 // as an Enum. However - in this case they are all dependant on multiple states: the root [`TutorialState`],
 // and both [`InGame`] and [`IsPaused`] - which are in turn derived from [`AppState`].
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-enum Tutorial {
-    MovementInstructions,
-    PauseInstructions,
-}
-
-impl ComputedStates for Tutorial {
-    // We can also use tuples of types that implement [`States`] as our [`SourceStates`].
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash, States)]
+#[computed(
+     // We can also use tuples of types that implement [`States`] as our parent states!
     // That includes other [`ComputedStates`] - though circular dependencies are not supported
     // and will produce a compile error.
     //
@@ -137,15 +117,10 @@ impl ComputedStates for Tutorial {
     // then we would need to duplicate the derivation logic for [`InGame`] and [`IsPaused`].
     // In this example that is not a significant undertaking, but as a rule it is likely more
     // effective to rely on the already derived states to avoid the logic drifting apart.
-    type SourceStates = (TutorialState, InGame, IsPaused);
+    (TutorialState, InGame, IsPaused),
 
-    fn compute(
-        (tutorial_state, in_game, is_paused): (
-            Option<TutorialState>,
-            Option<InGame>,
-            Option<IsPaused>,
-        ),
-    ) -> Option<Self> {
+    // When using a Tuple for our parent states, the sources argument is a tuple where all the parent states are wrapped in Options.
+    | (tutorial_state, in_game, is_paused)| {
         // If the tutorial is inactive or non-existent, we don't need to worry about it.
         if !matches!(tutorial_state, Some(TutorialState::Active)) {
             return None;
@@ -161,6 +136,10 @@ impl ComputedStates for Tutorial {
             IsPaused::Paused => Some(Tutorial::PauseInstructions),
         }
     }
+)]
+enum Tutorial {
+    MovementInstructions,
+    PauseInstructions,
 }
 
 fn main() {
@@ -331,19 +310,19 @@ fn menu(
     tutorial_state: Res<State<TutorialState>>,
     mut next_tutorial: ResMut<NextState<TutorialState>>,
     mut interaction_query: Query<
-        (&Interaction, &mut BackgroundColor, &MenuButton),
+        (&Interaction, &mut UiImage, &MenuButton),
         (Changed<Interaction>, With<Button>),
     >,
 ) {
     for (interaction, mut color, menu_button) in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
-                *color = if menu_button == &MenuButton::Tutorial
+                color.color = if menu_button == &MenuButton::Tutorial
                     && tutorial_state.get() == &TutorialState::Active
                 {
-                    PRESSED_ACTIVE_BUTTON.into()
+                    PRESSED_ACTIVE_BUTTON
                 } else {
-                    PRESSED_BUTTON.into()
+                    PRESSED_BUTTON
                 };
 
                 match menu_button {
@@ -361,18 +340,18 @@ fn menu(
                 if menu_button == &MenuButton::Tutorial
                     && tutorial_state.get() == &TutorialState::Active
                 {
-                    *color = HOVERED_ACTIVE_BUTTON.into();
+                    color.color = HOVERED_ACTIVE_BUTTON;
                 } else {
-                    *color = HOVERED_BUTTON.into();
+                    color.color = HOVERED_BUTTON;
                 }
             }
             Interaction::None => {
                 if menu_button == &MenuButton::Tutorial
                     && tutorial_state.get() == &TutorialState::Active
                 {
-                    *color = ACTIVE_BUTTON.into();
+                    color.color = ACTIVE_BUTTON;
                 } else {
-                    *color = NORMAL_BUTTON.into();
+                    color.color = NORMAL_BUTTON;
                 }
             }
         }

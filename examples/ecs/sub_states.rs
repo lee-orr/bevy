@@ -17,12 +17,12 @@ enum AppState {
 }
 
 // In this case, instead of deriving `States`, we derive `SubStates`
-#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, SubStates)]
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Hash, States)]
 // And we need to add an attribute to let us know what the source state is
 // and what value it needs to have. This will ensure that unless we're
 // in [`AppState::InGame`], the [`IsPaused`] state resource
 // will not exist.
-#[source(AppState = AppState::InGame)]
+#[substate(AppState = AppState::InGame)]
 enum IsPaused {
     #[default]
     Running,
@@ -120,21 +120,21 @@ fn setup_menu(mut commands: Commands) {
 fn menu(
     mut next_state: ResMut<NextState<AppState>>,
     mut interaction_query: Query<
-        (&Interaction, &mut BackgroundColor),
+        (&Interaction, &mut UiImage),
         (Changed<Interaction>, With<Button>),
     >,
 ) {
-    for (interaction, mut color) in &mut interaction_query {
+    for (interaction, mut image) in &mut interaction_query {
         match *interaction {
             Interaction::Pressed => {
-                *color = PRESSED_BUTTON.into();
+                image.color = PRESSED_BUTTON;
                 next_state.set(AppState::InGame);
             }
             Interaction::Hovered => {
-                *color = HOVERED_BUTTON.into();
+                image.color = HOVERED_BUTTON;
             }
             Interaction::None => {
-                *color = NORMAL_BUTTON.into();
+                image.color = NORMAL_BUTTON;
             }
         }
     }

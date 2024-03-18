@@ -13,7 +13,7 @@ use crate::schedule::ScheduleLabel;
 use crate::system::Resource;
 use crate::world::World;
 
-pub use bevy_ecs_macros::{States, SubStates};
+pub use bevy_ecs_macros::States;
 use bevy_utils::{all_tuples, HashSet};
 
 use self::sealed::StateSetSealed;
@@ -941,8 +941,6 @@ all_tuples!(impl_state_set_sealed_tuples, 1, 15, S, s);
 
 #[cfg(test)]
 mod tests {
-    use bevy_ecs_macros::SubStates;
-
     use super::*;
     use crate as bevy_ecs;
 
@@ -1018,8 +1016,8 @@ mod tests {
         assert!(!world.contains_resource::<State<TestComputedState>>());
     }
 
-    #[derive(SubStates, PartialEq, Eq, Debug, Default, Hash, Clone)]
-    #[source(SimpleState = SimpleState::B(true))]
+    #[derive(States, PartialEq, Eq, Debug, Default, Hash, Clone)]
+    #[substate(SimpleState = SimpleState::B(true))]
     enum SubState {
         #[default]
         One,
@@ -1075,8 +1073,8 @@ mod tests {
         assert!(!world.contains_resource::<State<SubState>>());
     }
 
-    #[derive(SubStates, PartialEq, Eq, Debug, Default, Hash, Clone)]
-    #[source(TestComputedState = TestComputedState::BisTrue)]
+    #[derive(States, PartialEq, Eq, Debug, Default, Hash, Clone)]
+    #[substate(TestComputedState = TestComputedState::BisTrue)]
     enum SubStateOfComputed {
         #[default]
         One,

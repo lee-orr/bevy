@@ -6,8 +6,8 @@ use proc_macro2::Span;
 use quote::{format_ident, quote};
 use syn::{
     parse::Parser, parse_macro_input, punctuated::Punctuated, spanned::Spanned, token::Comma,
-    Attribute, DeriveInput, Expr, ExprClosure, Ident, ImplGenerics, Path, Result,
-    TypeGenerics, WhereClause,
+    Attribute, DeriveInput, Expr, ExprClosure, Ident, ImplGenerics, Path, Result, TypeGenerics,
+    WhereClause,
 };
 
 use crate::bevy_ecs_path;

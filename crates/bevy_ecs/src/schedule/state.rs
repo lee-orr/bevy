@@ -31,10 +31,6 @@ use super::{InternedScheduleLabel, Schedule, Schedules};
 /// State transitions typically occur in the [`OnEnter<T::Variant>`] and [`OnExit<T::Variant>`] schedules,
 /// which can be run by triggering the [`StateTransition`] schedule.
 ///
-/// Types used as [`ComputedStates`] do not need to and should not derive [`States`].
-/// [`ComputedStates`] are not intended to be manually mutated, but this functionality is provided
-/// by the [`States`] derive and the associated [`FreelyMutableState`] trait.
-///
 /// # Example
 ///
 /// ```
@@ -49,6 +45,10 @@ use super::{InternedScheduleLabel, Schedule, Schedules};
 /// }
 ///
 /// ```
+///
+/// When deriving, use the `#[substate]` or `#[computed]` attributes to derive
+/// [`SubStates`] or [`ComputedStates`] respectively.
+///
 pub trait States: 'static + Send + Sync + Clone + PartialEq + Eq + Hash + Debug {
     /// How many other states this state depends on.
     /// Used to help order transitions and de-duplicate [`ComputedStates`], as well as prevent cyclical
@@ -471,28 +471,24 @@ pub fn apply_state_transition<S: FreelyMutableState>(world: &mut World) {
 /// }
 ///
 ///
-/// #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-/// struct InGame;
-///
-/// impl ComputedStates for InGame {
+/// #[derive(Clone, PartialEq, Eq, Hash, Debug, States)]
+/// #[computed(
 ///     /// We set the source state to be the state, or set of states,
 ///     /// we want to depend on.
-///     type SourceStates = AppState;
-///
-///     /// We then define the compute function, which takes in
+///     AppState,
+///     /// We then define the compute function, a closure which takes in
 ///     /// either a single optional state, or a tuple of optional
 ///     /// states based on whether our source is one state
 ///     /// or many.
-///     fn compute(sources: Option<AppState>) -> Option<Self> {
-///         match sources {
-///             /// When we are in game, we want to return the InGame state
-///             Some(AppState::InGame { .. }) => Some(InGame),
-///             /// Otherwise, we don't want the `State<InGame>` resource to exist,
-///             /// so we return None.
-///             _ => None
-///         }
+///     |sources| match sources {
+///         /// When we are in game, we want to return the InGame state
+///         Some(AppState::InGame { .. }) => Some(InGame),
+///         /// Otherwise, we don't want the `State<InGame>` resource to exist,
+///         /// so we return None.
+///         _ => None
 ///     }
-/// }
+/// )]
+/// struct InGame;
 /// ```
 ///
 /// you can then add it to an App, and from there you use the state as normal
@@ -696,7 +692,7 @@ impl<S: States> StateSet for S {
 ///
 ///
 /// #[derive(SubStates, Clone, PartialEq, Eq, Hash, Debug, Default)]
-/// #[source(AppState = AppState::InGame)]
+/// #[substate(AppState = AppState::InGame)]
 /// enum GamePhase {
 ///     #[default]
 ///     Setup,
@@ -737,28 +733,25 @@ impl<S: States> StateSet for S {
 ///     InGame { paused: bool }
 /// }
 ///
-/// #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-/// struct InGame;
-///
-/// impl ComputedStates for InGame {
+/// #[derive(Clone, PartialEq, Eq, Hash, Debug, States)]
+/// #[computed(
 ///     /// We set the source state to be the state, or set of states,
 ///     /// we want to depend on.
-///     type SourceStates = AppState;
+///     AppState,
 ///
 ///     /// We then define the compute function, which takes in
 ///     /// either a single optional state, or a tuple of optional
 ///     /// states based on whether our source is one state
 ///     /// or many.
-///     fn compute(sources: Option<AppState>) -> Option<Self> {
-///         match sources {
-///             /// When we are in game, we want to return the InGame state
-///             Some(AppState::InGame { .. }) => Some(InGame),
-///             /// Otherwise, we don't want the `State<InGame>` resource to exist,
-///             /// so we return None.
-///             _ => None
-///         }
-///     }
-/// }
+///     |sources| match sources {
+///         /// When we are in game, we want to return the InGame state
+///         Some(AppState::InGame { .. }) => Some(InGame),
+///         /// Otherwise, we don't want the `State<InGame>` resource to exist,
+///         /// so we return None.
+///         _ => None
+///    }
+/// )]
+/// struct InGame;
 ///
 /// #[derive(SubStates, Clone, PartialEq, Eq, Hash, Debug, Default)]
 /// #[source(InGame = InGame)]
@@ -770,9 +763,7 @@ impl<S: States> StateSet for S {
 /// }
 /// ```
 ///
-/// However, you can also manually implement them. Note that you'll also need to manually implement the `States` & `FreelyMutableState` traits.
-/// Unlike the derive, this does not require an implementation of [`Default`], since you are providing the `exists` function
-/// directly.
+/// However, you can also implement a more complex substate using an approach similar to the computed version of the derive macro.
 ///
 /// ```
 /// # use bevy_ecs::prelude::*;
@@ -787,38 +778,20 @@ impl<S: States> StateSet for S {
 /// }
 ///
 /// #[derive(Clone, PartialEq, Eq, Hash, Debug)]
+/// #[substate(AppState, |sources| match sources {
+///         /// When we are in game, so we want a GamePhase state to exist, and the default is
+///         /// GamePhase::Setup
+///         Some(AppState::InGame { .. }) => Some(GamePhase::Setup),
+///         /// Otherwise, we don't want the `State<GamePhase>` resource to exist,
+///         /// so we return None.
+///         _ => None
+///     }
+///  )]
 /// enum GamePhase {
 ///     Setup,
 ///     Battle,
 ///     Conclusion
 /// }
-///
-/// impl SubStates for GamePhase {
-///     /// We set the source state to be the state, or set of states,
-///     /// we want to depend on.
-///     type SourceStates = AppState;
-///
-///     /// We then define the compute function, which takes in
-///     /// either a single optional state, or a tuple of optional
-///     /// states based on whether our source is one state
-///     /// or many.
-///     fn exists(sources: Option<AppState>) -> Option<Self> {
-///         match sources {
-///             /// When we are in game, so we want a GamePhase state to exist, and the default is
-///             /// GamePhase::Setup
-///             Some(AppState::InGame { .. }) => Some(GamePhase::Setup),
-///             /// Otherwise, we don't want the `State<GamePhase>` resource to exist,
-///             /// so we return None.
-///             _ => None
-///         }
-///     }
-/// }
-///
-/// impl States for GamePhase {
-///     const DEPENDENCY_DEPTH : usize = <GamePhase as SubStates>::SourceStates::SET_DEPENDENCY_DEPTH + 1;
-/// }
-///
-/// impl FreelyMutableState for GamePhase {}
 /// ```
 pub trait SubStates: States + FreelyMutableState {
     /// The set of states from which the [`Self`] is derived.
@@ -953,21 +926,14 @@ mod tests {
         B(bool),
     }
 
-    #[derive(PartialEq, Eq, Debug, Hash, Clone)]
+    #[derive(PartialEq, Eq, Debug, Hash, Clone, States)]
+    #[computed(SimpleState, |sources| sources.and_then(|source| match source {
+        SimpleState::A => None,
+        SimpleState::B(value) => Some(if value { Self::BisTrue } else { Self::BisFalse }),
+    }) )]
     enum TestComputedState {
         BisTrue,
         BisFalse,
-    }
-
-    impl ComputedStates for TestComputedState {
-        type SourceStates = SimpleState;
-
-        fn compute(sources: Option<SimpleState>) -> Option<Self> {
-            sources.and_then(|source| match source {
-                SimpleState::A => None,
-                SimpleState::B(value) => Some(if value { Self::BisTrue } else { Self::BisFalse }),
-            })
-        }
     }
 
     #[test]
@@ -1074,7 +1040,10 @@ mod tests {
     }
 
     #[derive(States, PartialEq, Eq, Debug, Default, Hash, Clone)]
-    #[substate(TestComputedState = TestComputedState::BisTrue)]
+    #[substate(TestComputedState, |computed_substate| match computed_substate {
+        Some(TestComputedState::BisTrue) => Some(SubStateOfComputed::default()),
+        _ => None
+})]
     enum SubStateOfComputed {
         #[default]
         One,
@@ -1143,33 +1112,26 @@ mod tests {
         another_value: u8,
     }
 
-    #[derive(PartialEq, Eq, Debug, Hash, Clone)]
+    #[derive(PartialEq, Eq, Debug, Hash, Clone, States)]
+    #[computed((SimpleState, OtherState), |sources|
+    match sources {
+        (Some(simple), Some(complex)) => {
+            if simple == SimpleState::A
+                && (complex.a_flexible_value == "bob" || complex.a_flexible_value == "jane")
+            {
+                Some(ComplexComputedState::InAAndStrIsBobOrJane)
+            } else if simple == SimpleState::B(true) && complex.another_value > 8 {
+                Some(ComplexComputedState::InTrueBAndUsizeAbove8)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+)]
     enum ComplexComputedState {
         InAAndStrIsBobOrJane,
         InTrueBAndUsizeAbove8,
-    }
-
-    impl ComputedStates for ComplexComputedState {
-        type SourceStates = (SimpleState, OtherState);
-
-        fn compute(
-            sources: <<Self as ComputedStates>::SourceStates as StateSet>::OptionalStateSet,
-        ) -> Option<Self> {
-            match sources {
-                (Some(simple), Some(complex)) => {
-                    if simple == SimpleState::A
-                        && (complex.a_flexible_value == "bob" || complex.a_flexible_value == "jane")
-                    {
-                        Some(ComplexComputedState::InAAndStrIsBobOrJane)
-                    } else if simple == SimpleState::B(true) && complex.another_value > 8 {
-                        Some(ComplexComputedState::InTrueBAndUsizeAbove8)
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            }
-        }
     }
 
     #[test]
@@ -1246,26 +1208,19 @@ mod tests {
         B2,
     }
 
-    #[derive(PartialEq, Eq, Debug, Hash, Clone)]
+    #[derive(PartialEq, Eq, Debug, Hash, Clone, States)]
+    #[computed((SimpleState, SimpleState2), |(s1, s2)|  match (s1, s2) {
+        (Some(SimpleState::A), Some(SimpleState2::A1)) => Some(TestNewcomputedState::A1),
+        (Some(SimpleState::B(true)), Some(SimpleState2::B2)) => {
+            Some(TestNewcomputedState::B2)
+        }
+        (Some(SimpleState::B(true)), _) => Some(TestNewcomputedState::B1),
+        _ => None,
+    })]
     enum TestNewcomputedState {
         A1,
         B2,
         B1,
-    }
-
-    impl ComputedStates for TestNewcomputedState {
-        type SourceStates = (SimpleState, SimpleState2);
-
-        fn compute((s1, s2): (Option<SimpleState>, Option<SimpleState2>)) -> Option<Self> {
-            match (s1, s2) {
-                (Some(SimpleState::A), Some(SimpleState2::A1)) => Some(TestNewcomputedState::A1),
-                (Some(SimpleState::B(true)), Some(SimpleState2::B2)) => {
-                    Some(TestNewcomputedState::B2)
-                }
-                (Some(SimpleState::B(true)), _) => Some(TestNewcomputedState::B1),
-                _ => None,
-            }
-        }
     }
 
     #[test]

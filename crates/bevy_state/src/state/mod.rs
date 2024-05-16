@@ -354,8 +354,6 @@ mod tests {
         }
     }
 
-
-
     #[test]
     fn transitions_dont_trigger_on_equal_state() {
         let mut world = World::new();
@@ -415,6 +413,130 @@ mod tests {
         assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::A);
         assert_eq!(world.resource::<ComputedStateTransitionCounter>().enter, 2);
         assert_eq!(world.resource::<ComputedStateTransitionCounter>().exit, 1);
+
+    }
+
+    #[derive(Resource, Default)]
+    struct RefreshTransitionCounter {
+        enter: usize,
+        exit: usize,
+        refresh_enter: usize,
+        refresh_exit: usize,
+        refresh_only: usize,
+    }
+    #[test]
+    fn transitions_with_refresh_do_trigger_on_equal_state() {
+        let mut world = World::new();
+        EventRegistry::register_event::<StateTransitionEvent<SimpleState>>(&mut world);
+
+        world.init_resource::<State<SimpleState>>();
+
+        world.init_resource::<Schedules>();
+        world.init_resource::<RefreshTransitionCounter>();
+
+        setup_state_transitions_in_world(&mut world, None);
+
+        let mut schedules = world.resource_mut::<Schedules>();
+        let mut apply_changes = schedules
+            .get_mut(StateTransition)
+            .expect("State Transition Schedule Doesn't Exist");
+
+        SimpleState::register_state(&mut apply_changes);
+
+        schedules.insert({
+            let mut schedule = Schedule::new(OnEnter(SimpleState::A));
+            schedule.add_systems(|mut count: ResMut<RefreshTransitionCounter>| {
+                count.enter += 1;
+            });
+            schedule
+        });
+
+        schedules.insert({
+            let mut schedule = Schedule::new(OnExit(SimpleState::A));
+            schedule.add_systems(|mut count: ResMut<RefreshTransitionCounter>| {
+                count.exit += 1;
+            });
+            schedule
+        });
+
+        schedules.insert({
+            let mut schedule = Schedule::new(OnEnter(SimpleState::A).refreshable());
+            schedule.add_systems(|mut count: ResMut<RefreshTransitionCounter>| {
+                count.refresh_enter += 1;
+            });
+            schedule
+        });
+
+        schedules.insert({
+            let mut schedule = Schedule::new(OnExit(SimpleState::A).refreshable());
+            schedule.add_systems(|mut count: ResMut<RefreshTransitionCounter>| {
+                count.refresh_exit += 1;
+            });
+            schedule
+        });
+
+        schedules.insert({
+            let mut schedule = Schedule::new(OnRefresh(SimpleState::A));
+            schedule.add_systems(|mut count: ResMut<RefreshTransitionCounter>| {
+                count.refresh_only += 1;
+            });
+            schedule
+        });
+
+
+        world.run_schedule(StateTransition);
+
+        assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::A);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().enter, 1);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_enter, 1);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().exit, 0);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_exit, 0);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_only, 0);
+
+        world.insert_resource(NextState::Pending(SimpleState::B(true)));
+        world.run_schedule(StateTransition);
+        assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::B(true));
+        assert_eq!(world.resource::<RefreshTransitionCounter>().enter, 1);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_enter, 1);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().exit, 1);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_exit, 1);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_only, 0);
+
+        world.insert_resource(NextState::Pending(SimpleState::A));
+        world.run_schedule(StateTransition);
+        assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::A);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().enter, 2);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_enter, 2);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().exit, 1);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_exit, 1);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_only, 0);
+
+        world.insert_resource(NextState::Pending(SimpleState::A));
+        world.run_schedule(StateTransition);
+        assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::A);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().enter, 2);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_enter, 2);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().exit, 1);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_exit, 1);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_only, 0);
+
+        world.insert_resource(NextState::SetOrRefresh(SimpleState::A));
+        world.run_schedule(StateTransition);
+        assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::A);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().enter, 2);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_enter, 3);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().exit, 1);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_exit, 2);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_only, 1);
+
+        world.insert_resource(NextState::<SimpleState>::Refresh);
+        world.run_schedule(StateTransition);
+        assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::A);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().enter, 2);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_enter, 4);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().exit, 1);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_exit, 3);
+        assert_eq!(world.resource::<RefreshTransitionCounter>().refresh_only, 2);
 
     }
 

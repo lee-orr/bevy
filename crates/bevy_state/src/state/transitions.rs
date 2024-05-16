@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::{marker::PhantomData, mem, ops::DerefMut};
 
 use bevy_ecs::{
@@ -25,6 +26,11 @@ pub struct OnEnter<S: States>(pub S);
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OnExit<S: States>(pub S);
 
+/// The label of a [`Schedule`] that runs whenever [`State<S>`]
+/// exits this state.
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct OnRefresh<S: States>(pub S);
+
 /// The label of a [`Schedule`] that **only** runs whenever [`State<S>`]
 /// exits the `from` state, AND enters the `to` state.
 ///
@@ -36,6 +42,20 @@ pub struct OnTransition<S: States> {
     /// The state being entered.
     pub to: S,
 }
+
+/// A lable allowing other state-related schedules to run
+/// on refresh.
+#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Refreshable<L: ScheduleLabel>(pub L);
+
+pub trait MakeRefreshable: ScheduleLabel + Sized {
+    fn refreshable(self) -> Refreshable<Self> {
+        Refreshable(self)
+    }
+}
+
+impl<S: States> MakeRefreshable for OnEnter<S> {}
+impl<S: States> MakeRefreshable for OnExit<S> {}
 
 /// Runs [state transitions](States).
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
@@ -50,6 +70,15 @@ pub struct StateTransitionEvent<S: States> {
     pub before: Option<S>,
     /// the state we're in now
     pub after: Option<S>,
+    /// will this transition trigger refreshes
+    pub refreshing: StateTransitionType,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum StateTransitionType {
+    Changed,
+    ChangedWithRefresh,
+    UnchangedWithRefresh,
 }
 
 /// Applies manual state transitions using [`NextState<S>`].
@@ -84,6 +113,7 @@ pub(crate) fn internal_apply_state_transition<S: States>(
     mut commands: Commands,
     current_state: Option<ResMut<State<S>>>,
     new_state: Option<S>,
+    force_refresh: bool,
 ) {
     match new_state {
         Some(entered) => {
@@ -98,6 +128,13 @@ pub(crate) fn internal_apply_state_transition<S: States>(
                         event.send(StateTransitionEvent {
                             before: Some(exited.clone()),
                             after: Some(entered.clone()),
+                            refreshing: StateTransitionType::Changed,
+                        });
+                    } else if force_refresh {
+                        event.send(StateTransitionEvent {
+                            before: Some(entered.clone()),
+                            after: Some(entered.clone()),
+                            refreshing: StateTransitionType::UnchangedWithRefresh,
                         });
                     }
                 }
@@ -108,6 +145,7 @@ pub(crate) fn internal_apply_state_transition<S: States>(
                     event.send(StateTransitionEvent {
                         before: None,
                         after: Some(entered.clone()),
+                        refreshing: StateTransitionType::Changed,
                     });
                 }
             };
@@ -120,6 +158,7 @@ pub(crate) fn internal_apply_state_transition<S: States>(
                 event.send(StateTransitionEvent {
                     before: Some(resource.get().clone()),
                     after: None,
+                    refreshing: StateTransitionType::Changed,
                 });
             }
         }
@@ -169,7 +208,7 @@ pub fn setup_state_transitions_in_world(
 /// For [`SubStates`](crate::state::SubStates) - it only applies the state if the `SubState` currently exists. Otherwise, it is wiped.
 /// When a `SubState` is re-created, it will use the result of it's `should_exist` method.
 pub fn apply_state_transition<S: FreelyMutableState>(
-    event: EventWriter<StateTransitionEvent<S>>,
+    mut event: EventWriter<StateTransitionEvent<S>>,
     commands: Commands,
     current_state: Option<ResMut<State<S>>>,
     next_state: Option<ResMut<NextState<S>>>,
@@ -189,6 +228,7 @@ pub fn apply_state_transition<S: FreelyMutableState>(
                         commands,
                         Some(current_state),
                         Some(new_state),
+                        false,
                     );
                 }
             }
@@ -196,6 +236,28 @@ pub fn apply_state_transition<S: FreelyMutableState>(
         NextState::Unchanged => {
             // This is the default value, so we don't need to re-insert the resource
             return;
+        }
+        NextState::Refresh => {
+            let current = current_state.map(|inner| inner.get().clone());
+            event.send(StateTransitionEvent {
+                before: current.clone(),
+                after: current,
+                refreshing: StateTransitionType::UnchangedWithRefresh,
+            });
+        }
+        NextState::SetOrRefresh(new_state) => {
+            eprintln!("Set Or Refresh");
+            if let Some(current_state) = current_state {
+                let new_state = new_state.clone();
+                eprintln!("Set Or Refresh {new_state:?}");
+                internal_apply_state_transition(
+                    event,
+                    commands,
+                    Some(current_state),
+                    Some(new_state),
+                    true,
+                );
+            }
         }
     }
 
@@ -217,6 +279,7 @@ pub(crate) fn should_run_transition<S: States, T: ScheduleLabel>(
                 Some(StateTransitionEvent {
                     before: None,
                     after: Some(res.get().clone()),
+                    refreshing: StateTransitionType::Changed,
                 }),
                 PhantomData,
             );
@@ -232,12 +295,16 @@ pub(crate) fn run_enter<S: States>(
     let Some(transition) = transition else {
         return;
     };
+    eprintln!("Entering Transition: {transition:?}");
 
     let Some(after) = transition.after else {
         return;
     };
 
-    let _ = world.try_run_schedule(OnEnter(after));
+    if transition.refreshing == StateTransitionType::Changed {
+        let _ = world.try_run_schedule(OnEnter(after.clone()));
+    }
+    let _ = world.try_run_schedule(OnEnter(after).refreshable());
 }
 
 pub(crate) fn run_exit<S: States>(
@@ -252,7 +319,10 @@ pub(crate) fn run_exit<S: States>(
         return;
     };
 
-    let _ = world.try_run_schedule(OnExit(before));
+    if transition.refreshing == StateTransitionType::Changed {
+        let _ = world.try_run_schedule(OnExit(before.clone()));
+    }
+    let _ = world.try_run_schedule(OnExit(before).refreshable());
 }
 
 pub(crate) fn run_transition<S: States>(
@@ -271,6 +341,10 @@ pub(crate) fn run_transition<S: States>(
     let Some(to) = transition.after else {
         return;
     };
+
+    if from == to {
+        let _ = world.try_run_schedule(OnRefresh(to.clone()));
+    }
 
     let _ = world.try_run_schedule(OnTransition { from, to });
 }

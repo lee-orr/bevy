@@ -111,7 +111,7 @@ impl<S: InnerStateSet> StateSet for S {
                     None
                 };
 
-            internal_apply_state_transition(event, commands, current_state, new_state);
+            internal_apply_state_transition(event, commands, current_state, new_state, false);
         };
 
         schedule
@@ -166,11 +166,12 @@ impl<S: InnerStateSet> StateSet for S {
                             commands,
                             current_state,
                             Some(value),
+                            false
                         );
                     }
                 }
                 None => {
-                    internal_apply_state_transition(event, commands, current_state, None);
+                    internal_apply_state_transition(event, commands, current_state, None, false);
                 }
             };
         };
@@ -227,7 +228,7 @@ macro_rules! impl_state_set_sealed_tuples {
                         None
                     };
 
-                    internal_apply_state_transition(event, commands, current_state, new_state);
+                    internal_apply_state_transition(event, commands, current_state, new_state, false);
                 };
 
                 schedule
@@ -259,11 +260,11 @@ macro_rules! impl_state_set_sealed_tuples {
                     match new_state {
                         Some(value) => {
                             if current_state.is_none() {
-                                internal_apply_state_transition(event, commands, current_state, Some(value));
+                                internal_apply_state_transition(event, commands, current_state, Some(value), false);
                             }
                         }
                         None => {
-                            internal_apply_state_transition(event, commands, current_state, None);
+                            internal_apply_state_transition(event, commands, current_state, None, false);
                         },
                     };
                 };

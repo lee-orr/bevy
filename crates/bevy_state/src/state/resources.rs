@@ -118,6 +118,8 @@ pub enum NextState<S: FreelyMutableState> {
     Unchanged,
     /// There is a pending transition for state `S`
     Pending(S),
+    Refresh,
+    SetOrRefresh(S),
 }
 
 impl<S: FreelyMutableState> NextState<S> {

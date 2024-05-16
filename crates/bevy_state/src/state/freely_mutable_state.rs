@@ -14,7 +14,10 @@ pub trait FreelyMutableState: States {
     fn register_state(schedule: &mut Schedule) {
         schedule
             .add_systems(
-                apply_state_transition::<Self>.in_set(ApplyStateTransition::<Self>::apply()),
+                (
+                    initial_creation::<Self>,
+                    apply_state_transition::<Self>
+                ).chain().in_set(ApplyStateTransition::<Self>::apply()),
             )
             .add_systems(
                 should_run_transition::<Self, OnEnter<Self>>

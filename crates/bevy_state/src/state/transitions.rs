@@ -9,6 +9,7 @@ use bevy_ecs::{
     system::{Commands, In, Local, Res, ResMut},
     world::World,
 };
+use bevy_reflect::Reflect;
 
 use super::{
     freely_mutable_state::FreelyMutableState,
@@ -264,27 +265,25 @@ pub fn apply_state_transition<S: FreelyMutableState>(
     *next_state_resource.as_mut() = NextState::<S>::Unchanged;
 }
 
-pub(crate) fn should_run_transition<S: States, T: ScheduleLabel>(
-    mut first: Local<bool>,
-    res: Option<Res<State<S>>>,
-    mut event: EventReader<StateTransitionEvent<S>>,
-) -> (Option<StateTransitionEvent<S>>, PhantomData<T>) {
-    let first_mut = first.deref_mut();
-    if !*first_mut {
-        *first_mut = true;
-        if let Some(res) = res {
-            event.clear();
-
-            return (
-                Some(StateTransitionEvent {
-                    before: None,
-                    after: Some(res.get().clone()),
-                    refreshing: StateTransitionType::Changed,
-                }),
-                PhantomData,
-            );
+pub(crate) fn initial_creation<S: States>(mut ran_already: Local<bool>, mut writer: EventWriter<StateTransitionEvent<S>>, state: Option<Res<State<S>>>) {
+    let ran = ran_already.deref_mut();
+    if !*ran {
+        if let Some(state) = state {
+            *ran = true;
+            let current = state.get().clone();
+            let event = StateTransitionEvent {
+                before: None,
+                after: Some(current),
+                refreshing: StateTransitionType::Changed,
+            };
+            writer.send(event);
         }
     }
+}
+
+pub(crate) fn should_run_transition<S: States, T: ScheduleLabel>(
+    mut event: EventReader<StateTransitionEvent<S>>,
+) -> (Option<StateTransitionEvent<S>>, PhantomData<T>) {
     (event.read().last().cloned(), PhantomData)
 }
 

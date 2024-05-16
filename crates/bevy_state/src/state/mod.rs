@@ -354,6 +354,70 @@ mod tests {
         }
     }
 
+
+
+    #[test]
+    fn transitions_dont_trigger_on_equal_state() {
+        let mut world = World::new();
+        EventRegistry::register_event::<StateTransitionEvent<SimpleState>>(&mut world);
+
+        world.init_resource::<State<SimpleState>>();
+
+        world.init_resource::<Schedules>();
+        world.init_resource::<ComputedStateTransitionCounter>();
+
+        setup_state_transitions_in_world(&mut world, None);
+
+        let mut schedules = world.resource_mut::<Schedules>();
+        let mut apply_changes = schedules
+            .get_mut(StateTransition)
+            .expect("State Transition Schedule Doesn't Exist");
+
+        SimpleState::register_state(&mut apply_changes);
+
+        schedules.insert({
+            let mut schedule = Schedule::new(OnEnter(SimpleState::A));
+            schedule.add_systems(|mut count: ResMut<ComputedStateTransitionCounter>| {
+                count.enter += 1;
+            });
+            schedule
+        });
+
+        schedules.insert({
+            let mut schedule = Schedule::new(OnExit(SimpleState::A));
+            schedule.add_systems(|mut count: ResMut<ComputedStateTransitionCounter>| {
+                count.exit += 1;
+            });
+            schedule
+        });
+
+
+        world.run_schedule(StateTransition);
+
+        assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::A);
+        assert_eq!(world.resource::<ComputedStateTransitionCounter>().enter, 1);
+        assert_eq!(world.resource::<ComputedStateTransitionCounter>().exit, 0);
+
+        world.insert_resource(NextState::Pending(SimpleState::B(true)));
+        world.run_schedule(StateTransition);
+        assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::B(true));
+        assert_eq!(world.resource::<ComputedStateTransitionCounter>().enter, 1);
+        assert_eq!(world.resource::<ComputedStateTransitionCounter>().exit, 1);
+
+        world.insert_resource(NextState::Pending(SimpleState::A));
+        world.run_schedule(StateTransition);
+        assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::A);
+        assert_eq!(world.resource::<ComputedStateTransitionCounter>().enter, 2);
+        assert_eq!(world.resource::<ComputedStateTransitionCounter>().exit, 1);
+
+        world.insert_resource(NextState::Pending(SimpleState::A));
+        world.run_schedule(StateTransition);
+        assert_eq!(world.resource::<State<SimpleState>>().0, SimpleState::A);
+        assert_eq!(world.resource::<ComputedStateTransitionCounter>().enter, 2);
+        assert_eq!(world.resource::<ComputedStateTransitionCounter>().exit, 1);
+
+    }
+
     #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
     struct Startup;
 

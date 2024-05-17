@@ -11,7 +11,7 @@ use super::{
     apply_state_transition, computed_states::ComputedStates, internal_apply_state_transition,
     run_enter, run_exit, run_transition, should_run_transition, sub_states::SubStates,
     ApplyStateTransition, OnEnter, OnExit, OnTransition, State, StateTransitionEvent,
-    StateTransitionSteps, States,
+    StateTransitionSteps, StateTransitionType, States,
 };
 
 mod sealed {
@@ -99,10 +99,12 @@ impl<S: InnerStateSet> StateSet for S {
                       commands: Commands,
                       current_state: Option<ResMut<State<T>>>,
                       state_set: Option<Res<State<S::RawState>>>| {
-            if parent_changed.is_empty() {
+            let force_refresh = if let Some(parent_changed) = parent_changed.read().last().cloned()
+            {
+                parent_changed.refreshing != StateTransitionType::Changed
+            } else {
                 return;
-            }
-            parent_changed.clear();
+            };
 
             let new_state =
                 if let Some(state_set) = S::convert_to_usable_state(state_set.as_deref()) {
@@ -111,7 +113,13 @@ impl<S: InnerStateSet> StateSet for S {
                     None
                 };
 
-            internal_apply_state_transition(event, commands, current_state, new_state, false);
+            internal_apply_state_transition(
+                event,
+                commands,
+                current_state,
+                new_state,
+                force_refresh,
+            );
         };
 
         schedule
@@ -166,7 +174,7 @@ impl<S: InnerStateSet> StateSet for S {
                             commands,
                             current_state,
                             Some(value),
-                            false
+                            false,
                         );
                     }
                 }
@@ -217,10 +225,21 @@ macro_rules! impl_state_set_sealed_tuples {
                 schedule: &mut Schedule,
             ) {
                 let system = |($(mut $evt),*,): ($(EventReader<StateTransitionEvent<$param::RawState>>),*,), event: EventWriter<StateTransitionEvent<T>>, commands: Commands, current_state: Option<ResMut<State<T>>>, ($($val),*,): ($(Option<Res<State<$param::RawState>>>),*,)| {
-                    if ($($evt.is_empty())&&*) {
+                    let mut force_refresh = false;
+                    let mut at_least_one_change = false;
+
+                    $(
+                    if !force_refresh {
+                        if let Some($evt) = $evt.read().last().cloned() {
+                            let value = $evt.after;
+                            at_least_one_change = true;
+                            force_refresh = $evt.refreshing != StateTransitionType::Changed;
+                        }
+                    })*
+
+                    if !at_least_one_change {
                         return;
                     }
-                    $($evt.clear();)*
 
                     let new_state = if let ($(Some($val)),*,) = ($($param::convert_to_usable_state($val.as_deref())),*,) {
                         T::compute(($($val),*, ))
@@ -228,7 +247,7 @@ macro_rules! impl_state_set_sealed_tuples {
                         None
                     };
 
-                    internal_apply_state_transition(event, commands, current_state, new_state, false);
+                    internal_apply_state_transition(event, commands, current_state, new_state, force_refresh);
                 };
 
                 schedule

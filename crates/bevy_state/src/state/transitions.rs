@@ -9,7 +9,6 @@ use bevy_ecs::{
     system::{Commands, In, Local, Res, ResMut},
     world::World,
 };
-use bevy_reflect::Reflect;
 
 use super::{
     freely_mutable_state::FreelyMutableState,
@@ -247,10 +246,8 @@ pub fn apply_state_transition<S: FreelyMutableState>(
             });
         }
         NextState::SetOrRefresh(new_state) => {
-            eprintln!("Set Or Refresh");
             if let Some(current_state) = current_state {
                 let new_state = new_state.clone();
-                eprintln!("Set Or Refresh {new_state:?}");
                 internal_apply_state_transition(
                     event,
                     commands,
@@ -265,7 +262,11 @@ pub fn apply_state_transition<S: FreelyMutableState>(
     *next_state_resource.as_mut() = NextState::<S>::Unchanged;
 }
 
-pub(crate) fn initial_creation<S: States>(mut ran_already: Local<bool>, mut writer: EventWriter<StateTransitionEvent<S>>, state: Option<Res<State<S>>>) {
+pub(crate) fn initial_creation<S: States>(
+    mut ran_already: Local<bool>,
+    mut writer: EventWriter<StateTransitionEvent<S>>,
+    state: Option<Res<State<S>>>,
+) {
     let ran = ran_already.deref_mut();
     if !*ran {
         if let Some(state) = state {
@@ -294,7 +295,6 @@ pub(crate) fn run_enter<S: States>(
     let Some(transition) = transition else {
         return;
     };
-    eprintln!("Entering Transition: {transition:?}");
 
     let Some(after) = transition.after else {
         return;

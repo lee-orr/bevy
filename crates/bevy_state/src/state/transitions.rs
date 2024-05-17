@@ -27,7 +27,7 @@ pub struct OnEnter<S: States>(pub S);
 pub struct OnExit<S: States>(pub S);
 
 /// The label of a [`Schedule`] that runs whenever [`State<S>`]
-/// exits this state.
+/// is refreshed with a specific value
 #[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct OnRefresh<S: States>(pub S);
 
